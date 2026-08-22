@@ -1,0 +1,70 @@
+# ==========================================
+# Python Cache & Virtual Environments
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================================
+# Patching Workspace & Temporary Files
+# ==========================================
+work/
+*.tmp
+*.log
+
+# ==========================================
+# APK & Binary Files (Heavy & Build Outputs)
+# ==========================================
+*.apk
+*.ap_
+*.dex
+
+# ==========================================
+# Android SDK Build-Tools & Libraries
+# (Download separately, do not commit binaries)
+# ==========================================
+lib/*.jar
+build-tools/
+
+# ==========================================
+# Keystores & Sensitive Signing Keys
+# ==========================================
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+*.pk8
+debug.keystore
+
+# ==========================================
+# IDE & System Files
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

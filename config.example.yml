@@ -1,0 +1,14 @@
+# Custom Domain Routing (Overrides defaults)
+server:
+  api_host: "custom-api.example.com"
+  auth_host: "custom-auth.example.com"
+  custom_mappings:
+    "example-old.lowiro.com": "example-new.domain.com"
+
+# Custom Signing Configuration
+# If the specified keystore does not exist, a debug keystore will be generated automatically.
+signing:
+  keystore: "debug.keystore"
+  alias: "androiddebugkey"
+  keystore_password: "android"
+  key_password: "android"
