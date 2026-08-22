@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import tempfile
 from typing import List, Tuple
 from arcaea_patcher.config import PatchConfig
@@ -22,8 +23,11 @@ class PatchPipeline:
         if not self.config.input_apk.exists():
             raise FileNotFoundError(f"Target input APK does not exist: {self.config.input_apk}")
 
-        with tempfile.TemporaryDirectory(prefix="apk_patcher_") as temp_dir:
-            work_path = Path(temp_dir)
+        # Use manual mkdtemp instead of context manager to safely handle cleanup on Windows
+        temp_dir_path = tempfile.mkdtemp(prefix="apk_patcher_")
+        work_path = Path(temp_dir_path)
+
+        try:
             decoded_dir = work_path / "decoded"
             unaligned_apk = work_path / "unaligned.apk"
 
@@ -83,4 +87,13 @@ class PatchPipeline:
             logger.detail("Aligned output package.")
 
             self.toolchain.sign(self.config.output_apk, self.config.signing)
-            logger.success(f"Patched APK ready: {self.config.output_apk.resolve()}")
+            logger.success(f"Patched APK ready: {self.config.output_apk.absolute()}")
+
+        finally:
+            # Safe Cleanup Phase
+            # By passing `ignore_errors=True`, we bypass any RecursionError or PermissionError
+            # that Windows might throw due to deep file paths or temporary locked files.
+            try:
+                shutil.rmtree(temp_dir_path, ignore_errors=True)
+            except Exception:
+                pass
