@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import struct
-from typing import Dict, List, Optional
+from typing import List, Optional
 from arcaea_patcher.utils.logger import logger
 
 
@@ -39,25 +39,21 @@ class ElfParser:
 
     def _parse_headers(self) -> None:
         if self.is_64bit:
+            # 64-bit ELF Header offsets
+            self.e_shoff = struct.unpack_from(f"{self.endian_prefix}Q", self.data, 0x28)[0]
             (
-                self.e_shoff,
                 self.e_shentsize,
                 self.e_shnum,
                 self.e_shstrndx,
-            ) = struct.unpack_from(
-                f"{self.endian_prefix}QxxxxxxHHH", self.data, 0x28
-            )
+            ) = struct.unpack_from(f"{self.endian_prefix}HHH", self.data, 0x3A)
         else:
-            self.e_shoff = struct.unpack_from(
-                f"{self.endian_prefix}I", self.data, 0x20
-            )[0]
+            # 32-bit ELF Header offsets
+            self.e_shoff = struct.unpack_from(f"{self.endian_prefix}I", self.data, 0x20)[0]
             (
                 self.e_shentsize,
                 self.e_shnum,
                 self.e_shstrndx,
-            ) = struct.unpack_from(
-                f"{self.endian_prefix}HHH", self.data, 0x2E
-            )
+            ) = struct.unpack_from(f"{self.endian_prefix}HHH", self.data, 0x2E)
 
         self.sections: List[SectionHeader] = []
         for i in range(self.e_shnum):
@@ -113,6 +109,10 @@ class ElfParser:
         return self.data[strtab_offset + index : end].decode("ascii", errors="replace")
 
     def find_symbol_file_offset(self, symbol_name: str) -> Optional[int]:
+        # Guard against malformed e_shstrndx (prevents IndexError)
+        if self.e_shstrndx >= len(self.sections):
+            return None
+
         shstrtab_sec = self.sections[self.e_shstrndx]
         dynsym_sec: Optional[SectionHeader] = None
 
@@ -172,44 +172,48 @@ class NativeLibraryPatcher:
         self.library_path = library_path
 
     def patch_ssl_pinning(self) -> bool:
-        with open(self.library_path, "rb") as f:
-            data = bytearray(f.read())
-
+        # Wrap everything in try-except so an obfuscated/broken binary doesn't crash the pipeline
         try:
+            with open(self.library_path, "rb") as f:
+                data = bytearray(f.read())
+
             parser = ElfParser(data)
+
+            if parser.e_machine == 0xB7:  # AArch64
+                ret_void = self.ARM64_RET
+                ret_true = self.ARM64_RET_TRUE
+            elif parser.e_machine == 0x28:  # ARM32
+                ret_void = self.ARM32_RET
+                ret_true = self.ARM32_RET_TRUE
+            else:
+                logger.warn(f"[{self.library_path.parent.name}] Unsupported architecture machine: {hex(parser.e_machine)}")
+                return False
+
+            patched = False
+            # Symbols to return void
+            for sym in ["SSL_CTX_set_verify", "SSL_set_verify"]:
+                offset = parser.find_symbol_file_offset(sym)
+                if offset is not None:
+                    data[offset : offset + len(ret_void)] = ret_void
+                    logger.success(f"[{self.library_path.parent.name}] Patched {sym} (void)")
+                    patched = True
+
+            # Symbols to return success (1)
+            for sym in ["X509_verify_cert"]:
+                offset = parser.find_symbol_file_offset(sym)
+                if offset is not None:
+                    data[offset : offset + len(ret_true)] = ret_true
+                    logger.success(f"[{self.library_path.parent.name}] Patched {sym} (return 1)")
+                    patched = True
+
+            # Save if patches were applied
+            if patched:
+                with open(self.library_path, "wb") as f:
+                    f.write(data)
+
+            return patched
+
         except Exception as e:
-            logger.warn(f"Failed to parse {self.library_path.name}: {e}")
+            # Fallback gracefully instead of failing entirely
+            logger.warn(f"Failed to process {self.library_path.name} in {self.library_path.parent.name}: {e}")
             return False
-
-        if parser.e_machine == 0xB7:  # AArch64
-            ret_void = self.ARM64_RET
-            ret_true = self.ARM64_RET_TRUE
-        elif parser.e_machine == 0x28:  # ARM32
-            ret_void = self.ARM32_RET
-            ret_true = self.ARM32_RET_TRUE
-        else:
-            logger.warn(f"Unsupported architecture machine: {hex(parser.e_machine)}")
-            return False
-
-        patched = False
-        # Symbols to return void
-        for sym in ["SSL_CTX_set_verify", "SSL_set_verify"]:
-            offset = parser.find_symbol_file_offset(sym)
-            if offset is not None:
-                data[offset : offset + len(ret_void)] = ret_void
-                logger.success(f"[{self.library_path.parent.name}] Patched {sym} (void)")
-                patched = True
-
-        # Symbols to return success (1)
-        for sym in ["X509_verify_cert"]:
-            offset = parser.find_symbol_file_offset(sym)
-            if offset is not None:
-                data[offset : offset + len(ret_true)] = ret_true
-                logger.success(f"[{self.library_path.parent.name}] Patched {sym} (return 1)")
-                patched = True
-
-        if patched:
-            with open(self.library_path, "wb") as f:
-                f.write(data)
-
-        return patched
