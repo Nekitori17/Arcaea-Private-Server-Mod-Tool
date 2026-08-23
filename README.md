@@ -58,7 +58,7 @@ Provides `zipalign` and `apksigner`.
 The toolchain automatically detects the newest available build-tools from:
 
 - **Option A (System Android SDK)**: Environment variables `ANDROID_HOME` or `ANDROID_SDK_ROOT`.
-- **Option B (Local Folder)**: Place an extracted build-tools version folder (e.g. `34.0.0`) inside the `build-tools/` directory.
+- **Option B (Local Folder)**: Place an extracted build-tools version folder (e.g. `34.0.0`) inside the `build-tools/` directory. [Build Tools Release](https://androidsdkmanager.azurewebsites.net/build_tools.html)
 - **Option C (System PATH)**: `zipalign` and `apksigner` installed directly on your system.
 
 ---
