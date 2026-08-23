@@ -155,119 +155,72 @@ class ElfParser:
 
 
 class NativeLibraryPatcher:
-    """Applies binary & assembly patches to bypass native OpenSSL verification & reconstruct std::string domains."""
+    """Applies binary domain replacement and OpenSSL verification bypasses."""
 
-    ARM64_NOP = b"\x1F\x20\x03\xD5"                      # NOP
-    ARM64_RET = b"\xC0\x03\x5F\xD6"                      # RET
-    ARM64_RET_1 = b"\x20\x00\x80\x52" + ARM64_RET       # MOV W0, #1; RET (Success)
+    ARM64_RET = b"\xC0\x03\x5F\xD6"
+    ARM64_RET_1 = b"\x20\x00\x80\x52" + ARM64_RET       # MOV W0, #1; RET
     ARM64_RET_0 = b"\x00\x00\x80\x52" + ARM64_RET       # MOV W0, #0; RET (X509_V_OK)
 
-    ARM32_RET = b"\x1E\xFF\x2F\xE1"                      # BX LR
+    ARM32_RET = b"\x1E\xFF\x2F\xE1"
     ARM32_RET_1 = b"\x01\x00\xA0\xE3" + ARM32_RET       # MOV R0, #1; BX LR
     ARM32_RET_0 = b"\x00\x00\xA0\xE3" + ARM32_RET       # MOV R0, #0; BX LR
 
     def __init__(self, library_path: Path):
         self.library_path = library_path
 
-    @staticmethod
-    def _encode_arm64_movz(rd: int, imm16: int) -> bytes:
-        """Encodes `MOVZ Wd, #imm16` instruction for AArch64."""
-        opcode = 0x52800000 | ((imm16 & 0xFFFF) << 5) | (rd & 0x1F)
-        return opcode.to_bytes(4, "little")
+    def _replace_exact_bytes(self, data: bytearray, old_pattern: bytes, new_bytes: bytes) -> int:
+        """Replaces exact byte patterns padded to the target length with null bytes."""
+        if len(new_bytes) > len(old_pattern):
+            logger.warn(
+                f"[{self.library_path.parent.name}] Value '{new_bytes.decode(errors='ignore')}' ({len(new_bytes)}B) "
+                f"exceeds limit ({len(old_pattern)}B) for '{old_pattern.decode(errors='ignore')}'. Skipping."
+            )
+            return 0
 
-    def _patch_arm64_api_sso_string(self, data: bytearray, new_host: str) -> bool:
+        padded_replacement = new_bytes + b"\x00" * (len(old_pattern) - len(new_bytes))
+        count = 0
+        start = 0
+        while True:
+            idx = data.find(old_pattern, start)
+            if idx == -1:
+                break
+            data[idx : idx + len(old_pattern)] = padded_replacement
+            count += 1
+            start = idx + len(old_pattern)
+
+        return count
+
+    def _patch_arm64_auth_assembly(self, data: bytearray, new_host: str) -> bool:
         """
-        Patches the inline `std::string` constructor for arcapi-v4 at .text:017C4218.
-        Original pattern: MOV W8, #0x28 (len 20*2=40)
-        """
-        new_bytes = new_host.encode("utf-8")
-        str_len = len(new_bytes)
-        if str_len > 20:
-            logger.warn(f"API Host '{new_host}' ({str_len}B) exceeds 20-byte SSO limit. Skipping.")
-            return False
-
-        # Pattern: MOV W8, #0x28 (0x08, 0x05, 0x80, 0x52)
-        pattern = b"\x08\x05\x80\x52"
-        idx = data.find(pattern)
-        if idx == -1:
-            logger.warn("Could not find arcapi-v4 SSO Assembly sequence.")
-            return False
-
-        # 1. Patch MOV W8, #(str_len * 2)
-        data[idx : idx + 4] = self._encode_arm64_movz(8, str_len * 2)
-
-        # 2. Patch remaining bytes
-        if str_len <= 16:
-            # NOP out MOV W9 (#0x6D6F632E) at idx+4 and STUR W9 at idx+16
-            data[idx + 4 : idx + 8] = self.ARM64_NOP
-            data[idx + 16 : idx + 20] = self.ARM64_NOP
-        else:
-            # Encode remaining 1..4 bytes into W9
-            rem = new_bytes[16:str_len].ljust(4, b"\x00")
-            imm32 = int.from_bytes(rem, "little")
-            data[idx + 4 : idx + 8] = self._encode_arm64_movz(9, imm32 & 0xFFFF)
-
-        logger.success(f"[{self.library_path.parent.name}] Patched arcapi-v4 SSO Assembly (New Length: {str_len})")
-        return True
-
-    def _patch_arm64_auth_sso_string(self, data: bytearray, new_host: str) -> bool:
-        """
-        Patches the inline `std::string` constructor for auth-v2 at .text:017C44E8.
-        Original pattern: MOV W8, #0x24 (len 18*2=36)
+        Force patches ARM64 assembly constructor for auth-v2.
+        Pattern at .text:017C44F4: MOV W8, #0x24 (52800488) ; MOV W9, #0x6D6F (5280DAE9)
         """
         new_bytes = new_host.encode("utf-8")
         str_len = len(new_bytes)
         if str_len > 18:
-            logger.warn(f"Auth Host '{new_host}' ({str_len}B) exceeds 18-byte SSO limit. Skipping.")
             return False
 
-        # Pattern: MOV W8, #0x24 (0x88, 0x04, 0x80, 0x52)
+        # Pattern: MOV W8, #0x24 (88 04 80 52)
         pattern = b"\x88\x04\x80\x52"
         idx = data.find(pattern)
-        if idx == -1:
-            logger.warn("Could not find auth-v2 SSO Assembly sequence.")
-            return False
+        if idx != -1:
+            # Update length: MOV W8, #(str_len * 2)
+            imm16 = (str_len * 2) & 0xFFFF
+            mov_w8 = 0x52800000 | (imm16 << 5) | 8
+            data[idx : idx + 4] = mov_w8.to_bytes(4, "little")
 
-        # 1. Patch MOV W8, #(str_len * 2)
-        data[idx : idx + 4] = self._encode_arm64_movz(8, str_len * 2)
+            # Update tail 2 bytes in W9: MOV W9, #tail
+            if str_len >= 17:
+                tail = new_bytes[16:str_len].ljust(2, b"\x00")
+                tail_imm = int.from_bytes(tail, "little")
+                mov_w9 = 0x52800000 | (tail_imm << 5) | 9
+                data[idx + 4 : idx + 8] = mov_w9.to_bytes(4, "little")
+            else:
+                # NOP out MOV W9 and STURH W9
+                data[idx + 4 : idx + 8] = b"\x1F\x20\x03\xD5"  # NOP
+                data[idx + 16 : idx + 20] = b"\x1F\x20\x03\xD5"  # NOP
 
-        # 2. Patch remaining bytes
-        if str_len <= 16:
-            # NOP out MOV W9 (#0x6D6F) at idx+4 and STURH W9 at idx+16
-            data[idx + 4 : idx + 8] = self.ARM64_NOP
-            data[idx + 16 : idx + 20] = self.ARM64_NOP
-        else:
-            # Encode remaining 1..2 bytes into W9
-            rem = new_bytes[16:str_len].ljust(2, b"\x00")
-            imm16 = int.from_bytes(rem, "little")
-            data[idx + 4 : idx + 8] = self._encode_arm64_movz(9, imm16)
-
-        logger.success(f"[{self.library_path.parent.name}] Patched auth-v2 SSO Assembly (New Length: {str_len})")
-        return True
-
-    def _replace_string_padded(self, data: bytearray, old_str: str, new_str: str) -> bool:
-        """Finds null-terminated string in .rodata and pads with null bytes."""
-        old_bytes = old_str.encode("utf-8") + b"\x00"
-        new_bytes = new_str.encode("utf-8")
-
-        if len(new_bytes) >= len(old_bytes):
-            return False
-
-        replacement = new_bytes + b"\x00" * (len(old_bytes) - len(new_bytes))
-        count = 0
-        start = 0
-        while True:
-            idx = data.find(old_bytes, start)
-            if idx == -1:
-                break
-            data[idx : idx + len(old_bytes)] = replacement
-            count += 1
-            start = idx + len(old_bytes)
-
-        if count > 0:
-            logger.success(
-                f"[{self.library_path.parent.name}] Replaced {count} string(s) in .rodata: '{old_str}' -> '{new_str}'"
-            )
+            logger.success(f"[{self.library_path.parent.name}] Patched auth-v2 Assembly Constructor (Len: {str_len})")
             return True
         return False
 
@@ -299,29 +252,36 @@ class NativeLibraryPatcher:
 
             patched = False
 
-            # 1. Patch Domain Strings (.rodata + Assembly SSO construction)
+            # 1. Exhaustive Domain Replacements across entire binary (.rodata)
             if api_host:
-                self._replace_string_padded(data, "arcapi-v4.lowiro.com", api_host)
-                self._replace_string_padded(data, "arcapi-v3.lowiro.com", api_host)
-                if is_arm64:
-                    self._patch_arm64_api_sso_string(data, api_host)
-                patched = True
+                api_bytes = api_host.encode("utf-8")
+                c1 = self._replace_exact_bytes(data, b"arcapi-v4.lowiro.com", api_bytes)
+                c2 = self._replace_exact_bytes(data, b"arcapi-v3.lowiro.com", api_bytes)
+                if c1 > 0 or c2 > 0:
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {c1 + c2} API URL occurrence(s) -> '{api_host}'")
+                    patched = True
 
             if auth_host:
-                self._replace_string_padded(data, "auth-v2.lowiro.com", auth_host)
-                self._replace_string_padded(data, "auth.lowiro.com", auth_host)
-                self._replace_string_padded(data, "arcaea.lowiro.com", auth_host)
+                auth_bytes = auth_host.encode("utf-8")
+                c3 = self._replace_exact_bytes(data, b"auth-v2.lowiro.com", auth_bytes)
+                c4 = self._replace_exact_bytes(data, b"auth.lowiro.com", auth_bytes)
+                c5 = self._replace_exact_bytes(data, b"arcaea.lowiro.com", auth_bytes)
+                if c3 > 0 or c4 > 0 or c5 > 0:
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {c3 + c4 + c5} Auth URL occurrence(s) -> '{auth_host}'")
+                    patched = True
+
+                # Patch ARM64 assembly constructor
                 if is_arm64:
-                    self._patch_arm64_auth_sso_string(data, auth_host)
-                patched = True
+                    self._patch_arm64_auth_assembly(data, auth_host)
 
             if custom_mappings:
                 for old_h, new_h in custom_mappings.items():
-                    if self._replace_string_padded(data, old_h, new_h):
+                    cnt = self._replace_exact_bytes(data, old_h.encode("utf-8"), new_h.encode("utf-8"))
+                    if cnt > 0:
+                        logger.success(f"[{self.library_path.parent.name}] Replaced {cnt} custom mapping(s): '{old_h}' -> '{new_h}'")
                         patched = True
 
-            # 2. Patch OpenSSL / BoringSSL Functions
-            # Return Void
+            # 2. Native SSL Pinning Bypass (OpenSSL / BoringSSL)
             for sym in ["SSL_CTX_set_verify", "SSL_set_verify", "SSL_CTX_set_custom_verify"]:
                 offset = parser.find_symbol_file_offset(sym)
                 if offset is not None:
@@ -329,7 +289,6 @@ class NativeLibraryPatcher:
                     logger.success(f"[{self.library_path.parent.name}] Patched {sym} (void)")
                     patched = True
 
-            # Return Success (1)
             for sym in ["X509_verify_cert"]:
                 offset = parser.find_symbol_file_offset(sym)
                 if offset is not None:
@@ -337,7 +296,6 @@ class NativeLibraryPatcher:
                     logger.success(f"[{self.library_path.parent.name}] Patched {sym} (return 1)")
                     patched = True
 
-            # Return X509_V_OK (0) for libcurl SSL_get_verify_result
             for sym in ["SSL_get_verify_result"]:
                 offset = parser.find_symbol_file_offset(sym)
                 if offset is not None:

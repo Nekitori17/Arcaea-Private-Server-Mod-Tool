@@ -2,8 +2,8 @@
 # api_host MUST be <= 20 bytes
 # auth_host MUST be <= 18 bytes
 server:
-  api_host: "arc-api.onrender.com"
-  auth_host: "au-v2.onrender.com"
+  api_host: "arc-api.nekitori.com"
+  auth_host: "au-v2.nekitori.com"
 
 # Custom Signing Configuration
 # If the keystore does not exist, a debug keystore will be generated automatically.

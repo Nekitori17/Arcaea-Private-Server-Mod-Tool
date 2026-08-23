@@ -68,3 +68,5 @@ debug.keystore
 .DS_Store
 Thumbs.db
 desktop.ini
+
+config.yml
