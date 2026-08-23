@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
 import tempfile
-from typing import List, Tuple
 from arcaea_patcher.config import PatchConfig
 from arcaea_patcher.core.apk_toolchain import ApkToolchain
 from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
@@ -23,7 +22,6 @@ class PatchPipeline:
         if not self.config.input_apk.exists():
             raise FileNotFoundError(f"Target input APK does not exist: {self.config.input_apk}")
 
-        # Use manual mkdtemp instead of context manager to safely handle cleanup on Windows
         temp_dir_path = tempfile.mkdtemp(prefix="apk_patcher_")
         work_path = Path(temp_dir_path)
 
@@ -42,40 +40,24 @@ class PatchPipeline:
                 nsc_patcher = ManifestAndSecurityPatcher(decoded_dir)
                 nsc_patcher.inject_network_security_config()
 
-            # Phase 3: Native Library Patching
-            if self.config.patch_native_ssl:
-                logger.header("[3/5] Patching Native Binaries (.so)")
-                so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
-                if not so_files:
-                    logger.warn("No libcocos2dcpp.so binaries found.")
-                for so_file in so_files:
-                    patcher = NativeLibraryPatcher(so_file)
-                    patcher.patch_ssl_pinning()
+            # Phase 3: Native Binary Patching (SSL Bypass + Domain Redirection via Assembly & .rodata)
+            logger.header("[3/5] Patching Native Binaries (.so)")
+            so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
+            if not so_files:
+                logger.warn("No libcocos2dcpp.so binaries found.")
+            for so_file in so_files:
+                patcher = NativeLibraryPatcher(so_file)
+                patcher.patch_domains_and_ssl(
+                    api_host=self.config.server.api_host,
+                    auth_host=self.config.server.auth_host,
+                    custom_mappings=self.config.server.custom_mappings,
+                )
 
-            # Phase 4: Smali / Java Bytecode Patching
-            if self.config.patch_java_ssl or self.config.server.api_host or self.config.server.auth_host:
+            # Phase 4: Java Bytecode SSL Patching
+            if self.config.patch_java_ssl:
                 logger.header("[4/5] Patching Java Bytecode")
                 smali_patcher = SmaliPatcher(decoded_dir)
-                if self.config.patch_java_ssl:
-                    smali_patcher.patch_ssl_pinning()
-
-                replacements: List[Tuple[str, str]] = []
-                if self.config.server.api_host:
-                    replacements.extend([
-                        ("arcapi-v4.lowiro.com", self.config.server.api_host),
-                        ("arcapi-v3.lowiro.com", self.config.server.api_host),
-                    ])
-                if self.config.server.auth_host:
-                    replacements.extend([
-                        ("auth-v2.lowiro.com", self.config.server.auth_host),
-                        ("auth.lowiro.com", self.config.server.auth_host),
-                        ("arcaea.lowiro.com", self.config.server.auth_host),
-                    ])
-                for old_h, new_h in self.config.server.custom_mappings.items():
-                    replacements.append((old_h, new_h))
-
-                if replacements:
-                    smali_patcher.inject_domain_replacement(replacements)
+                smali_patcher.patch_ssl_pinning()
 
             # Phase 5: Rebuild, Align, and Sign
             logger.header("[5/5] Rebuilding & Signing APK")
@@ -90,9 +72,6 @@ class PatchPipeline:
             logger.success(f"Patched APK ready: {self.config.output_apk.absolute()}")
 
         finally:
-            # Safe Cleanup Phase
-            # By passing `ignore_errors=True`, we bypass any RecursionError or PermissionError
-            # that Windows might throw due to deep file paths or temporary locked files.
             try:
                 shutil.rmtree(temp_dir_path, ignore_errors=True)
             except Exception:

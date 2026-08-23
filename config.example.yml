@@ -1,12 +1,12 @@
-# Custom Domain Routing (Overrides defaults)
+# Custom Domain Routing
+# api_host MUST be <= 20 bytes
+# auth_host MUST be <= 18 bytes
 server:
-  api_host: "custom-api.example.com"
-  auth_host: "custom-auth.example.com"
-  custom_mappings:
-    "example-old.lowiro.com": "example-new.domain.com"
+  api_host: "arc-api.onrender.com"
+  auth_host: "au-v2.onrender.com"
 
 # Custom Signing Configuration
-# If the specified keystore does not exist, a debug keystore will be generated automatically.
+# If the keystore does not exist, a debug keystore will be generated automatically.
 signing:
   keystore: "debug.keystore"
   alias: "androiddebugkey"
