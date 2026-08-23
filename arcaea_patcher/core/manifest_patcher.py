@@ -45,3 +45,38 @@ class ManifestAndSecurityPatcher:
             logger.success("Added networkSecurityConfig attribute to AndroidManifest.xml")
         else:
             logger.detail("Manifest already contains networkSecurityConfig attribute.")
+
+    def change_package_name(self, new_package_name: str) -> None:
+        manifest_file = self.decoded_dir / "AndroidManifest.xml"
+        if not manifest_file.exists():
+            logger.warn("AndroidManifest.xml not found!")
+            return
+
+        manifest_text = manifest_file.read_text(encoding="utf-8")
+        
+        # Find original package name
+        match = re.search(r'<manifest[^>]*\s+package="([^"]+)"', manifest_text)
+        if not match:
+            logger.warn("Could not find package attribute in AndroidManifest.xml")
+            return
+            
+        old_package_name = match.group(1)
+        if old_package_name == new_package_name:
+            logger.detail(f"Package name is already {new_package_name}")
+            return
+            
+        # Replace the package name in the manifest (handles attributes and provider authorities using it)
+        manifest_text = manifest_text.replace(old_package_name, new_package_name)
+        manifest_file.write_text(manifest_text, encoding="utf-8")
+        logger.success(f"Changed package name from {old_package_name} to {new_package_name} in AndroidManifest.xml")
+        
+        # Also update apktool.yml so Apktool builds the APK correctly
+        apktool_yml = self.decoded_dir / "apktool.yml"
+        if apktool_yml.exists():
+            yml_text = apktool_yml.read_text(encoding="utf-8")
+            if "renameManifestPackage:" in yml_text:
+                yml_text = re.sub(r"renameManifestPackage:\s*.*", f"renameManifestPackage: {new_package_name}", yml_text)
+            else:
+                yml_text += f"\nrenameManifestPackage: {new_package_name}\n"
+            apktool_yml.write_text(yml_text, encoding="utf-8")
+            logger.detail(f"Updated apktool.yml renameManifestPackage to {new_package_name}")

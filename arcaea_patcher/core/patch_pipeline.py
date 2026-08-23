@@ -30,18 +30,22 @@ class PatchPipeline:
             unaligned_apk = work_path / "unaligned.apk"
 
             # Phase 1: Decompile
-            logger.header("[1/5] Decompiling APK")
+            logger.header("[1/6] Decompiling APK")
             self.toolchain.decompile(self.config.input_apk, decoded_dir)
             logger.success("APK successfully decoded.")
 
-            # Phase 2: Network Security Config
+            # Phase 2: Manifest & Network Security Config
+            manifest_patcher = ManifestAndSecurityPatcher(decoded_dir)
+            if self.config.package_name:
+                logger.header("[2/6] Changing Package Name")
+                manifest_patcher.change_package_name(self.config.package_name)
+
             if self.config.inject_nsc:
-                logger.header("[2/5] Injecting Network Security Config")
-                nsc_patcher = ManifestAndSecurityPatcher(decoded_dir)
-                nsc_patcher.inject_network_security_config()
+                logger.header("[3/6] Injecting Network Security Config")
+                manifest_patcher.inject_network_security_config()
 
             # Phase 3: Native Binary Patching (SSL Bypass + Domain Redirection via Assembly & .rodata)
-            logger.header("[3/5] Patching Native Binaries (.so)")
+            logger.header("[4/6] Patching Native Binaries (.so)")
             so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
             if not so_files:
                 logger.warn("No libcocos2dcpp.so binaries found.")
@@ -55,12 +59,12 @@ class PatchPipeline:
 
             # Phase 4: Java Bytecode SSL Patching
             if self.config.patch_java_ssl:
-                logger.header("[4/5] Patching Java Bytecode")
+                logger.header("[5/6] Patching Java Bytecode")
                 smali_patcher = SmaliPatcher(decoded_dir)
                 smali_patcher.patch_ssl_pinning()
 
             # Phase 5: Rebuild, Align, and Sign
-            logger.header("[5/5] Rebuilding & Signing APK")
+            logger.header("[6/6] Rebuilding & Signing APK")
             self.toolchain.build(decoded_dir, unaligned_apk)
             logger.detail("Rebuilt APK with apktool.")
 

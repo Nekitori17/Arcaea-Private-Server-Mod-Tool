@@ -24,6 +24,7 @@ class SigningConfig:
 class PatchConfig:
     input_apk: Path
     output_apk: Path
+    package_name: Optional[str] = None
     server: ServerRoutingConfig = field(default_factory=ServerRoutingConfig)
     signing: SigningConfig = field(default_factory=SigningConfig)
     patch_native_ssl: bool = True
@@ -38,6 +39,7 @@ class PatchConfig:
         config_file: Optional[Path] = None,
         api_host: Optional[str] = None,
         auth_host: Optional[str] = None,
+        package_name: Optional[str] = None,
     ) -> "PatchConfig":
         cfg = cls(input_apk=input_apk, output_apk=output_apk)
 
@@ -59,6 +61,8 @@ class PatchConfig:
             cfg.server.auth_host = server_data.get("auth_host")
             cfg.server.custom_mappings = server_data.get("custom_mappings", {})
 
+            cfg.package_name = raw_cfg.get("package_name")
+
             signing_data = raw_cfg.get("signing", {})
             if "keystore" in signing_data:
                 cfg.signing.keystore_path = Path(signing_data["keystore"])
@@ -77,6 +81,8 @@ class PatchConfig:
             cfg.server.api_host = api_host
         if auth_host:
             cfg.server.auth_host = auth_host
+        if package_name:
+            cfg.package_name = package_name
 
         if cfg.server.api_host or cfg.server.auth_host:
             logger.info(

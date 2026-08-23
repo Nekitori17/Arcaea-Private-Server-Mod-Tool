@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Custom hostname to replace Authentication endpoints",
     )
+    parser.add_argument(
+        "--package-name",
+        type=str,
+        default=None,
+        help="Custom package name for the patched APK",
+    )
     return parser.parse_args()
 
 
@@ -50,6 +56,7 @@ def run_app() -> None:
         config_file=args.config,
         api_host=args.api_host,
         auth_host=args.auth_host,
+        package_name=args.package_name,
     )
 
     toolchain = ApkToolchain()

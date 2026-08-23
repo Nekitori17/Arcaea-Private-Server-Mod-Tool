@@ -140,6 +140,10 @@ server:
   api_host: "arc-api.nekitori17.com"
   auth_host: "au-v2.nekitori17.com"
 
+# Custom Package Name (Optional)
+# Change the APK package name to install alongside the original app
+package_name: "moe.low.arc.custom"
+
 # Custom Signing Configuration
 # If the keystore does not exist, a debug keystore will be generated automatically.
 signing:
@@ -167,6 +171,7 @@ options:
   -c, --config CONFIG   Optional YAML configuration file
   --api-host API_HOST   Custom hostname for API endpoints (max 20 chars)
   --auth-host AUTH_HOST Custom hostname for Auth endpoints (max 18 chars)
+  --package-name PKG    Custom package name for the patched APK
 ```
 
 ---
