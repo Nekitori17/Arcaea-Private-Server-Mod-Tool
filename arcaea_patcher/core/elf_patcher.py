@@ -168,61 +168,21 @@ class NativeLibraryPatcher:
     def __init__(self, library_path: Path):
         self.library_path = library_path
 
-    def _replace_exact_bytes(self, data: bytearray, old_pattern: bytes, new_bytes: bytes) -> int:
-        """Replaces exact byte patterns padded to the target length with null bytes."""
+    def _replace_exact_bytes(self, data: bytearray, old_pattern: bytes, new_host: str) -> int:
+        """Replaces exact byte patterns padded with null bytes to preserve binary offset alignment."""
+        new_bytes = new_host.encode("utf-8")
         if len(new_bytes) > len(old_pattern):
             logger.warn(
-                f"[{self.library_path.parent.name}] Value '{new_bytes.decode(errors='ignore')}' ({len(new_bytes)}B) "
+                f"[{self.library_path.parent.name}] Value '{new_host}' ({len(new_bytes)}B) "
                 f"exceeds limit ({len(old_pattern)}B) for '{old_pattern.decode(errors='ignore')}'. Skipping."
             )
             return 0
 
         padded_replacement = new_bytes + b"\x00" * (len(old_pattern) - len(new_bytes))
-        count = 0
-        start = 0
-        while True:
-            idx = data.find(old_pattern, start)
-            if idx == -1:
-                break
-            data[idx : idx + len(old_pattern)] = padded_replacement
-            count += 1
-            start = idx + len(old_pattern)
-
+        count = data.count(old_pattern)
+        if count > 0:
+            data[:] = data.replace(old_pattern, padded_replacement)
         return count
-
-    def _patch_arm64_auth_assembly(self, data: bytearray, new_host: str) -> bool:
-        """
-        Force patches ARM64 assembly constructor for auth-v2.
-        Pattern at .text:017C44F4: MOV W8, #0x24 (52800488) ; MOV W9, #0x6D6F (5280DAE9)
-        """
-        new_bytes = new_host.encode("utf-8")
-        str_len = len(new_bytes)
-        if str_len > 18:
-            return False
-
-        # Pattern: MOV W8, #0x24 (88 04 80 52)
-        pattern = b"\x88\x04\x80\x52"
-        idx = data.find(pattern)
-        if idx != -1:
-            # Update length: MOV W8, #(str_len * 2)
-            imm16 = (str_len * 2) & 0xFFFF
-            mov_w8 = 0x52800000 | (imm16 << 5) | 8
-            data[idx : idx + 4] = mov_w8.to_bytes(4, "little")
-
-            # Update tail 2 bytes in W9: MOV W9, #tail
-            if str_len >= 17:
-                tail = new_bytes[16:str_len].ljust(2, b"\x00")
-                tail_imm = int.from_bytes(tail, "little")
-                mov_w9 = 0x52800000 | (tail_imm << 5) | 9
-                data[idx + 4 : idx + 8] = mov_w9.to_bytes(4, "little")
-            else:
-                # NOP out MOV W9 and STURH W9
-                data[idx + 4 : idx + 8] = b"\x1F\x20\x03\xD5"  # NOP
-                data[idx + 16 : idx + 20] = b"\x1F\x20\x03\xD5"  # NOP
-
-            logger.success(f"[{self.library_path.parent.name}] Patched auth-v2 Assembly Constructor (Len: {str_len})")
-            return True
-        return False
 
     def patch_domains_and_ssl(
         self,
@@ -240,43 +200,35 @@ class NativeLibraryPatcher:
                 ret_void = self.ARM64_RET
                 ret_true = self.ARM64_RET_1
                 ret_zero = self.ARM64_RET_0
-                is_arm64 = True
             elif parser.e_machine == 0x28:  # ARM32
                 ret_void = self.ARM32_RET
                 ret_true = self.ARM32_RET_1
                 ret_zero = self.ARM32_RET_0
-                is_arm64 = False
             else:
                 logger.warn(f"[{self.library_path.parent.name}] Unsupported architecture: {hex(parser.e_machine)}")
                 return False
 
             patched = False
 
-            # 1. Exhaustive Domain Replacements across entire binary (.rodata)
+            # 1. URL Domain Replacements (Matching test.py exact replace)
             if api_host:
-                api_bytes = api_host.encode("utf-8")
-                c1 = self._replace_exact_bytes(data, b"arcapi-v4.lowiro.com", api_bytes)
-                c2 = self._replace_exact_bytes(data, b"arcapi-v3.lowiro.com", api_bytes)
+                c1 = self._replace_exact_bytes(data, b"arcapi-v4.lowiro.com", api_host)
+                c2 = self._replace_exact_bytes(data, b"arcapi-v3.lowiro.com", api_host)
                 if c1 > 0 or c2 > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {c1 + c2} API URL occurrence(s) -> '{api_host}'")
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {c1 + c2} arcapi-v4/v3 -> {api_host}")
                     patched = True
 
             if auth_host:
-                auth_bytes = auth_host.encode("utf-8")
-                c3 = self._replace_exact_bytes(data, b"auth-v2.lowiro.com", auth_bytes)
-                c4 = self._replace_exact_bytes(data, b"auth.lowiro.com", auth_bytes)
-                c5 = self._replace_exact_bytes(data, b"arcaea.lowiro.com", auth_bytes)
+                c3 = self._replace_exact_bytes(data, b"auth-v2.lowiro.com", auth_host)
+                c4 = self._replace_exact_bytes(data, b"auth.lowiro.com", auth_host)
+                c5 = self._replace_exact_bytes(data, b"arcaea.lowiro.com", auth_host)
                 if c3 > 0 or c4 > 0 or c5 > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {c3 + c4 + c5} Auth URL occurrence(s) -> '{auth_host}'")
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {c3 + c4 + c5} auth-v2/auth -> {auth_host}")
                     patched = True
-
-                # Patch ARM64 assembly constructor
-                if is_arm64:
-                    self._patch_arm64_auth_assembly(data, auth_host)
 
             if custom_mappings:
                 for old_h, new_h in custom_mappings.items():
-                    cnt = self._replace_exact_bytes(data, old_h.encode("utf-8"), new_h.encode("utf-8"))
+                    cnt = self._replace_exact_bytes(data, old_h.encode("utf-8"), new_h)
                     if cnt > 0:
                         logger.success(f"[{self.library_path.parent.name}] Replaced {cnt} custom mapping(s): '{old_h}' -> '{new_h}'")
                         patched = True
