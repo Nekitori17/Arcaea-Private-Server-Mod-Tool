@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import struct
 from typing import Dict, List, Optional
+from arcaea_patcher.constants import API_DOMAINS, AUTH_DOMAINS
 from arcaea_patcher.utils.logger import logger
 
 
@@ -212,18 +213,21 @@ class NativeLibraryPatcher:
 
             # 1. URL Domain Replacements (Matching test.py exact replace)
             if api_host:
-                c1 = self._replace_exact_bytes(data, b"arcapi-v4.lowiro.com", api_host)
-                c2 = self._replace_exact_bytes(data, b"arcapi-v3.lowiro.com", api_host)
-                if c1 > 0 or c2 > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {c1 + c2} arcapi-v4/v3 -> {api_host}")
+                replaced_api = 0
+                for domain in API_DOMAINS:
+                    replaced_api += self._replace_exact_bytes(data, domain, api_host)
+                
+                if replaced_api > 0:
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {replaced_api} API domains -> {api_host}")
                     patched = True
 
             if auth_host:
-                c3 = self._replace_exact_bytes(data, b"auth-v2.lowiro.com", auth_host)
-                c4 = self._replace_exact_bytes(data, b"auth.lowiro.com", auth_host)
-                c5 = self._replace_exact_bytes(data, b"arcaea.lowiro.com", auth_host)
-                if c3 > 0 or c4 > 0 or c5 > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {c3 + c4 + c5} auth-v2/auth -> {auth_host}")
+                replaced_auth = 0
+                for domain in AUTH_DOMAINS:
+                    replaced_auth += self._replace_exact_bytes(data, domain, auth_host)
+                
+                if replaced_auth > 0:
+                    logger.success(f"[{self.library_path.parent.name}] Replaced {replaced_auth} Auth domains -> {auth_host}")
                     patched = True
 
             if custom_mappings:
