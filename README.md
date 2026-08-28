@@ -1,4 +1,4 @@
-# Arcaea Private Server Patcher - v6.16.8c
+# Arcaea Private Server Patcher - v7.0.1c
 
 A modular, lightweight, and automated Python tool designed to unpack, patch, rebuild, and sign Arcaea (and similar Cocos2d-based) Android APKs for custom server routing and certificate verification adjustments.
 
