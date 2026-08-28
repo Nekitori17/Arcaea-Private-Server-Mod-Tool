@@ -11,6 +11,9 @@ class ServerRoutingConfig:
     auth_host: Optional[str] = None
     custom_mappings: Dict[str, str] = field(default_factory=dict)
 
+@dataclass
+class FeaturesConfig:
+    expose_internal_data: bool = False
 
 @dataclass
 class SigningConfig:
@@ -25,6 +28,7 @@ class PatchConfig:
     input_apk: Path
     output_apk: Path
     package_name: Optional[str] = None
+    feature_config: FeaturesConfig = field(default_factory=FeaturesConfig)
     server: ServerRoutingConfig = field(default_factory=ServerRoutingConfig)
     signing: SigningConfig = field(default_factory=SigningConfig)
     patch_native_ssl: bool = True
@@ -56,14 +60,17 @@ class PatchConfig:
             with open(config_file, "r", encoding="utf-8") as f:
                 raw_cfg = yaml.safe_load(f) or {}
 
-            server_data = raw_cfg.get("server", {})
+            server_data = raw_cfg.get("server") or {}
             cfg.server.api_host = server_data.get("api_host")
             cfg.server.auth_host = server_data.get("auth_host")
             cfg.server.custom_mappings = server_data.get("custom_mappings", {})
 
             cfg.package_name = raw_cfg.get("package_name")
 
-            signing_data = raw_cfg.get("signing", {})
+            feature_data = raw_cfg.get("features") or {}
+            cfg.feature_config.expose_internal_data = feature_data.get("expose_internal_data", False)
+
+            signing_data = raw_cfg.get("signing") or {}
             if "keystore" in signing_data:
                 cfg.signing.keystore_path = Path(signing_data["keystore"])
             cfg.signing.alias = signing_data.get("alias", cfg.signing.alias)

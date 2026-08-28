@@ -46,6 +46,43 @@ class ManifestAndSecurityPatcher:
         else:
             logger.detail("Manifest already contains networkSecurityConfig attribute.")
 
+    def inject_documents_provider(self) -> None:
+        manifest_file = self.decoded_dir / "AndroidManifest.xml"
+        if not manifest_file.exists():
+            logger.warn("AndroidManifest.xml not found!")
+            return
+
+        manifest_text = manifest_file.read_text(encoding="utf-8")
+        
+        if "android.content.action.DOCUMENTS_PROVIDER" in manifest_text:
+            logger.detail("Manifest already contains DocumentsProvider.")
+            return
+            
+        match = re.search(r'<manifest[^>]*\s+package="([^"]+)"', manifest_text)
+        if not match:
+            logger.warn("Could not find package attribute in AndroidManifest.xml")
+            return
+        current_pkg = match.group(1)
+
+        provider_xml = f"""
+        <provider
+            android:name="moe.low.arc.custom.InternalStorageProvider"
+            android:authorities="{current_pkg}.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+            <!-- Required on Android 14+ (SDK 34+) for persistable URI permissions -->
+            <grant-uri-permission android:pathPattern=".*" />
+        </provider>
+"""
+        # Inject just before the closing </application> tag
+        manifest_text = manifest_text.replace("</application>", f"{provider_xml}    </application>")
+        manifest_file.write_text(manifest_text, encoding="utf-8")
+        logger.success("Injected InternalStorageProvider into AndroidManifest.xml")
+
     def change_package_name(self, new_package_name: str) -> None:
         manifest_file = self.decoded_dir / "AndroidManifest.xml"
         if not manifest_file.exists():

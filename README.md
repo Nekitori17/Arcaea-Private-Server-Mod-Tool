@@ -138,11 +138,15 @@ You can define custom hostnames and signing credentials via YAML:
 # auth_host MUST be <= 18 bytes
 server:
   api_host: "arc-api.nekitori17.com"
-  auth_host: "au-v2.nekitori17.com"
+  auth_host: "ar-au.nekitori17.com"
 
 # Custom Package Name (Optional)
 # Change the APK package name to install alongside the original app
 package_name: "moe.low.arc.custom"
+
+features:
+  # Expose Internal App Data via Storage Access Framework
+  expose_internal_data: false
 
 # Custom Signing Configuration
 # If the keystore does not exist, a debug keystore will be generated automatically.

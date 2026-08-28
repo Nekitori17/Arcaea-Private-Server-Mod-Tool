@@ -30,22 +30,36 @@ class PatchPipeline:
             unaligned_apk = work_path / "unaligned.apk"
 
             # Phase 1: Decompile
-            logger.header("[1/6] Decompiling APK")
+            logger.header("[1/8] Decompiling APK")
             self.toolchain.decompile(self.config.input_apk, decoded_dir)
             logger.success("APK successfully decoded.")
 
             # Phase 2: Manifest & Network Security Config
             manifest_patcher = ManifestAndSecurityPatcher(decoded_dir)
             if self.config.package_name:
-                logger.header("[2/6] Changing Package Name")
+                logger.header("[2/8] Changing Package Name")
                 manifest_patcher.change_package_name(self.config.package_name)
 
             if self.config.inject_nsc:
-                logger.header("[3/6] Injecting Network Security Config")
+                logger.header("[3/8] Injecting Network Security Config")
                 manifest_patcher.inject_network_security_config()
 
+            if self.config.feature_config.expose_internal_data:
+                logger.header("[4/8] Injecting Storage Access Framework Provider")
+                manifest_patcher.inject_documents_provider()
+                
+                # Copy Smali template
+                template_path = Path(__file__).parent.parent / "templates" / "InternalStorageProvider.smali"
+                if template_path.exists():
+                    dest_smali_dir = decoded_dir / "smali_classes2" / "moe" / "low" / "arc" / "custom"
+                    dest_smali_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(template_path, dest_smali_dir / "InternalStorageProvider.smali")
+                    logger.detail("Injected InternalStorageProvider.smali")
+                else:
+                    logger.warn("InternalStorageProvider.smali template not found!")
+
             # Phase 3: Native Binary Patching (SSL Bypass + Domain Redirection via Assembly & .rodata)
-            logger.header("[4/6] Patching Native Binaries (.so)")
+            logger.header("[5/8] Patching Native Binaries (.so)")
             so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
             if not so_files:
                 logger.warn("No libcocos2dcpp.so binaries found.")
@@ -59,12 +73,12 @@ class PatchPipeline:
 
             # Phase 4: Java Bytecode SSL Patching
             if self.config.patch_java_ssl:
-                logger.header("[5/6] Patching Java Bytecode")
+                logger.header("[7/8] Patching Java Bytecode")
                 smali_patcher = SmaliPatcher(decoded_dir)
                 smali_patcher.patch_ssl_pinning()
 
             # Phase 5: Rebuild, Align, and Sign
-            logger.header("[6/6] Rebuilding & Signing APK")
+            logger.header("[8/8] Rebuilding & Signing APK")
             self.toolchain.build(decoded_dir, unaligned_apk)
             logger.detail("Rebuilt APK with apktool.")
 
