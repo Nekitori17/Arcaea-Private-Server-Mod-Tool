@@ -1,27 +1,21 @@
 from dataclasses import dataclass
 from pathlib import Path
 import struct
-from typing import Dict, List, Optional
-from arcaea_patcher.constants import API_DOMAINS, AUTH_DOMAINS
+from typing import Optional, Tuple
 from arcaea_patcher.utils.logger import logger
 
 
 @dataclass
-class SectionHeader:
-    name_idx: int
-    sh_type: int
-    sh_flags: int
-    sh_addr: int
-    sh_offset: int
-    sh_size: int
-    sh_link: int
-    sh_info: int
-    sh_addralign: int
-    sh_entsize: int
+class ProgramHeader:
+    p_type: int
+    p_offset: int
+    p_vaddr: int
+    p_memsz: int
 
 
 class ElfParser:
-    """Robust 32-bit and 64-bit ELF parser for symbol resolution."""
+    """Robust 32-bit and 64-bit ELF parser resistant to section stripping.
+    Resolves symbols strictly via Program Headers (PT_DYNAMIC & PT_LOAD)."""
 
     def __init__(self, data: bytearray):
         self.data = data
@@ -40,117 +34,137 @@ class ElfParser:
 
     def _parse_headers(self) -> None:
         if self.is_64bit:
-            self.e_shoff = struct.unpack_from(f"{self.endian_prefix}Q", self.data, 0x28)[0]
             (
+                self.e_phoff,
+                self.e_shoff,
+                self.e_flags,
+                self.e_ehsize,
+                self.e_phentsize,
+                self.e_phnum,
                 self.e_shentsize,
                 self.e_shnum,
                 self.e_shstrndx,
-            ) = struct.unpack_from(f"{self.endian_prefix}HHH", self.data, 0x3A)
+            ) = struct.unpack_from(f"{self.endian_prefix}QQIHHHHHH", self.data, 0x20)
         else:
-            self.e_shoff = struct.unpack_from(f"{self.endian_prefix}I", self.data, 0x20)[0]
             (
+                self.e_phoff,
+                self.e_shoff,
+                self.e_flags,
+                self.e_ehsize,
+                self.e_phentsize,
+                self.e_phnum,
                 self.e_shentsize,
                 self.e_shnum,
                 self.e_shstrndx,
-            ) = struct.unpack_from(f"{self.endian_prefix}HHH", self.data, 0x2E)
+            ) = struct.unpack_from(f"{self.endian_prefix}IIIHHHHHH", self.data, 0x1C) # FIX: Change IIII to III
 
-        self.sections: List[SectionHeader] = []
-        for i in range(self.e_shnum):
-            off = self.e_shoff + (i * self.e_shentsize)
+        self.program_headers = []
+        for i in range(self.e_phnum):
+            off = self.e_phoff + (i * self.e_phentsize)
             if self.is_64bit:
                 (
-                    name,
-                    stype,
-                    flags,
-                    addr,
-                    offset,
-                    size,
-                    link,
-                    info,
-                    align,
-                    entsize,
-                ) = struct.unpack_from(f"{self.endian_prefix}IIQQQQIIQQ", self.data, off)
+                    p_type, p_flags, p_offset, p_vaddr, p_paddr,
+                    p_filesz, p_memsz, p_align
+                ) = struct.unpack_from(f"{self.endian_prefix}IIQQQQQQ", self.data, off)
             else:
                 (
-                    name,
-                    stype,
-                    flags,
-                    addr,
-                    offset,
-                    size,
-                    link,
-                    info,
-                    align,
-                    entsize,
-                ) = struct.unpack_from(f"{self.endian_prefix}IIIIIIIIII", self.data, off)
+                    p_type, p_offset, p_vaddr, p_paddr,
+                    p_filesz, p_memsz, p_flags, p_align
+                ) = struct.unpack_from(f"{self.endian_prefix}IIIIIIII", self.data, off)
 
-            self.sections.append(
-                SectionHeader(
-                    name_idx=name,
-                    sh_type=stype,
-                    sh_flags=flags,
-                    sh_addr=addr,
-                    sh_offset=offset,
-                    sh_size=size,
-                    sh_link=link,
-                    sh_info=info,
-                    sh_addralign=align,
-                    sh_entsize=entsize,
+            self.program_headers.append(
+                ProgramHeader(
+                    p_type=p_type,
+                    p_offset=p_offset,
+                    p_vaddr=p_vaddr,
+                    p_memsz=p_memsz
                 )
             )
 
-    def _get_string(self, strtab_offset: int, strtab_size: int, index: int) -> str:
-        if index >= strtab_size:
-            return ""
+    def vaddr_to_offset(self, vaddr: int) -> Optional[int]:
+        """Convert a virtual address to a file offset using PT_LOAD headers."""
+        for ph in self.program_headers:
+            if ph.p_type == 1:  # PT_LOAD
+                if ph.p_vaddr <= vaddr < (ph.p_vaddr + ph.p_memsz):
+                    return ph.p_offset + (vaddr - ph.p_vaddr)
+        return None
+
+    def _get_string(self, strtab_offset: int, index: int) -> str:
         end = self.data.find(b"\x00", strtab_offset + index)
         if end == -1:
-            end = strtab_offset + strtab_size
-        return self.data[strtab_offset + index : end].decode("ascii", errors="replace")
+            return ""
+        return self.data[strtab_offset + index : end].decode("ascii", errors="ignore")
 
-    def find_symbol_file_offset(self, symbol_name: str) -> Optional[int]:
-        if self.e_shstrndx >= len(self.sections):
+    def find_symbol_info(self, symbol_name: str) -> Optional[Tuple[int, bool]]:
+        """Finds symbol in PT_DYNAMIC. Returns tuple(file_offset, is_thumb)."""
+        dyn_ph = next((ph for ph in self.program_headers if ph.p_type == 2), None)
+        if not dyn_ph:
             return None
 
-        shstrtab_sec = self.sections[self.e_shstrndx]
-        dynsym_sec: Optional[SectionHeader] = None
+        ent_sz = 16 if self.is_64bit else 8
+        symtab_vaddr = None
+        strtab_vaddr = None
+        syment = 24 if self.is_64bit else 16
 
-        for sec in self.sections:
-            sec_name = self._get_string(
-                shstrtab_sec.sh_offset, shstrtab_sec.sh_size, sec.name_idx
-            )
-            if sec_name == ".dynsym":
-                dynsym_sec = sec
+        # Parse DT Entries
+        for i in range(dyn_ph.p_memsz // ent_sz):
+            off = dyn_ph.p_offset + (i * ent_sz)
+            if self.is_64bit:
+                d_tag, d_val = struct.unpack_from(f"{self.endian_prefix}QQ", self.data, off)
+            else:
+                d_tag, d_val = struct.unpack_from(f"{self.endian_prefix}II", self.data, off)
+
+            if d_tag == 2:    # DT_SYMTAB
+                symtab_vaddr = d_val
+            elif d_tag == 5:  # DT_STRTAB
+                strtab_vaddr = d_val
+            elif d_tag == 11: # DT_SYMENT
+                syment = d_val
+            elif d_tag == 0:  # DT_NULL
                 break
 
-        if not dynsym_sec or dynsym_sec.sh_link >= len(self.sections):
+        if symtab_vaddr is None or strtab_vaddr is None:
             return None
 
-        dynstr_sec = self.sections[dynsym_sec.sh_link]
-        entry_size = 24 if self.is_64bit else 16
-        count = dynsym_sec.sh_size // entry_size
+        symtab_off = self.vaddr_to_offset(symtab_vaddr)
+        strtab_off = self.vaddr_to_offset(strtab_vaddr)
 
-        for i in range(count):
-            sym_off = dynsym_sec.sh_offset + (i * entry_size)
+        if symtab_off is None or strtab_off is None:
+            return None
+
+        # Determine reasonable limit for symbol parsing to prevent out of bounds
+        max_entries = 50000
+        if symtab_off < strtab_off:
+            estimated = (strtab_off - symtab_off) // syment
+            if estimated > 0:
+                max_entries = min(max_entries, estimated)
+
+        for i in range(max_entries):
+            sym_off = symtab_off + (i * syment)
+            if sym_off + syment > len(self.data):
+                break
+
             if self.is_64bit:
-                st_name, st_info, st_other, st_shndx, st_value, _ = struct.unpack_from(
+                st_name, st_info, st_other, st_shndx, st_value, st_size = struct.unpack_from(
                     f"{self.endian_prefix}IBBHQQ", self.data, sym_off
                 )
             else:
-                st_name, st_value, _, st_info, st_other, st_shndx = struct.unpack_from(
+                st_name, st_value, st_size, st_info, st_other, st_shndx = struct.unpack_from(
                     f"{self.endian_prefix}IIIBBH", self.data, sym_off
                 )
 
             if st_shndx == 0 or st_value == 0:
                 continue
 
-            name = self._get_string(
-                dynstr_sec.sh_offset, dynstr_sec.sh_size, st_name
-            )
+            name = self._get_string(strtab_off, st_name)
             if name == symbol_name:
-                for sec in self.sections:
-                    if sec.sh_addr <= st_value < (sec.sh_addr + sec.sh_size):
-                        return sec.sh_offset + (st_value - sec.sh_addr)
-                return st_value
+                # ARM32 Thumb check (LSB == 1 means Thumb-2)
+                is_thumb = (not self.is_64bit) and ((st_value & 1) != 0)
+                # Clear the architecture bit to get the actual instruction address
+                actual_addr = st_value & ~1
+                func_off = self.vaddr_to_offset(actual_addr)
+                if func_off is not None:
+                    return (func_off, is_thumb)
 
         return None
 
@@ -158,104 +172,78 @@ class ElfParser:
 class NativeLibraryPatcher:
     """Applies binary domain replacement and OpenSSL verification bypasses."""
 
-    ARM64_RET = b"\xC0\x03\x5F\xD6"
-    ARM64_RET_1 = b"\x20\x00\x80\x52" + ARM64_RET       # MOV W0, #1; RET
-    ARM64_RET_0 = b"\x00\x00\x80\x52" + ARM64_RET       # MOV W0, #0; RET (X509_V_OK)
+    # ARM64: AArch64 instructions are always 4 bytes
+    ARM64_RET_VOID = b"\xC0\x03\x5F\xD6"
+    ARM64_RET_TRUE = b"\x20\x00\x80\x52\xC0\x03\x5F\xD6" # MOV W0, #1; RET
+    ARM64_RET_ZERO = b"\x00\x00\x80\x52\xC0\x03\x5F\xD6" # MOV W0, #0; RET
 
-    ARM32_RET = b"\x1E\xFF\x2F\xE1"
-    ARM32_RET_1 = b"\x01\x00\xA0\xE3" + ARM32_RET       # MOV R0, #1; BX LR
-    ARM32_RET_0 = b"\x00\x00\xA0\xE3" + ARM32_RET       # MOV R0, #0; BX LR
+    # ARM32 (ARM Mode): 4 bytes per instruction
+    ARM32_RET_VOID = b"\x1E\xFF\x2F\xE1"
+    ARM32_RET_TRUE = b"\x01\x00\xA0\xE3\x1E\xFF\x2F\xE1" # MOV R0, #1; BX LR
+    ARM32_RET_ZERO = b"\x00\x00\xA0\xE3\x1E\xFF\x2F\xE1" # MOV R0, #0; BX LR
+
+    # ARM32 (Thumb Mode): 2 or 4 bytes per instruction
+    THUMB_RET_VOID = b"\x70\x47\xC0\x46"                 # BX LR; NOP
+    THUMB_RET_TRUE = b"\x01\x20\x70\x47"                 # MOVS R0, #1; BX LR
+    THUMB_RET_ZERO = b"\x00\x20\x70\x47"                 # MOVS R0, #0; BX LR
 
     def __init__(self, library_path: Path):
         self.library_path = library_path
 
-    def _replace_exact_bytes(self, data: bytearray, old_pattern: bytes, new_host: str) -> int:
-        """Replaces exact byte patterns padded with null bytes to preserve binary offset alignment."""
-        new_bytes = new_host.encode("utf-8")
-        if len(new_bytes) > len(old_pattern):
-            logger.warn(
-                f"[{self.library_path.parent.name}] Value '{new_host}' ({len(new_bytes)}B) "
-                f"exceeds limit ({len(old_pattern)}B) for '{old_pattern.decode(errors='ignore')}'. Skipping."
-            )
-            return 0
+    def _get_patch(self, machine: int, is_thumb: bool, ret_type: str) -> bytes:
+        if machine == 0xB7:  # AArch64
+            if ret_type == 'void': return self.ARM64_RET_VOID
+            if ret_type == 'true': return self.ARM64_RET_TRUE
+            if ret_type == 'zero': return self.ARM64_RET_ZERO
+        elif machine == 0x28:  # ARM32
+            if is_thumb:
+                if ret_type == 'void': return self.THUMB_RET_VOID
+                if ret_type == 'true': return self.THUMB_RET_TRUE
+                if ret_type == 'zero': return self.THUMB_RET_ZERO
+            else:
+                if ret_type == 'void': return self.ARM32_RET_VOID
+                if ret_type == 'true': return self.ARM32_RET_TRUE
+                if ret_type == 'zero': return self.ARM32_RET_ZERO
+        return b""
 
-        padded_replacement = new_bytes + b"\x00" * (len(old_pattern) - len(new_bytes))
-        count = data.count(old_pattern)
-        if count > 0:
-            data[:] = data.replace(old_pattern, padded_replacement)
-        return count
-
-    def patch_domains_and_ssl(
-        self,
-        api_host: Optional[str] = None,
-        auth_host: Optional[str] = None,
-        custom_mappings: Optional[Dict[str, str]] = None,
-    ) -> bool:
+    def patch_ssl_bypass(self) -> bool:
+        """Applies binary OpenSSL / BoringSSL verification bypasses."""
         try:
             with open(self.library_path, "rb") as f:
                 data = bytearray(f.read())
 
             parser = ElfParser(data)
-
-            if parser.e_machine == 0xB7:  # AArch64
-                ret_void = self.ARM64_RET
-                ret_true = self.ARM64_RET_1
-                ret_zero = self.ARM64_RET_0
-            elif parser.e_machine == 0x28:  # ARM32
-                ret_void = self.ARM32_RET
-                ret_true = self.ARM32_RET_1
-                ret_zero = self.ARM32_RET_0
-            else:
+            if parser.e_machine not in (0xB7, 0x28):
                 logger.warn(f"[{self.library_path.parent.name}] Unsupported architecture: {hex(parser.e_machine)}")
                 return False
 
             patched = False
 
-            # 1. URL Domain Replacements (Matching test.py exact replace)
-            if api_host:
-                replaced_api = 0
-                for domain in API_DOMAINS:
-                    replaced_api += self._replace_exact_bytes(data, domain, api_host)
-                
-                if replaced_api > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {replaced_api} API domains -> {api_host}")
-                    patched = True
-
-            if auth_host:
-                replaced_auth = 0
-                for domain in AUTH_DOMAINS:
-                    replaced_auth += self._replace_exact_bytes(data, domain, auth_host)
-                
-                if replaced_auth > 0:
-                    logger.success(f"[{self.library_path.parent.name}] Replaced {replaced_auth} Auth domains -> {auth_host}")
-                    patched = True
-
-            if custom_mappings:
-                for old_h, new_h in custom_mappings.items():
-                    cnt = self._replace_exact_bytes(data, old_h.encode("utf-8"), new_h)
-                    if cnt > 0:
-                        logger.success(f"[{self.library_path.parent.name}] Replaced {cnt} custom mapping(s): '{old_h}' -> '{new_h}'")
-                        patched = True
-
-            # 2. Native SSL Pinning Bypass (OpenSSL / BoringSSL)
+            # Native SSL Pinning Bypass (OpenSSL / BoringSSL)
             for sym in ["SSL_CTX_set_verify", "SSL_set_verify", "SSL_CTX_set_custom_verify"]:
-                offset = parser.find_symbol_file_offset(sym)
-                if offset is not None:
-                    data[offset : offset + len(ret_void)] = ret_void
+                sym_info = parser.find_symbol_info(sym)
+                if sym_info:
+                    offset, is_thumb = sym_info
+                    patch = self._get_patch(parser.e_machine, is_thumb, 'void')
+                    data[offset : offset + len(patch)] = patch
                     logger.success(f"[{self.library_path.parent.name}] Patched {sym} (void)")
                     patched = True
 
             for sym in ["X509_verify_cert"]:
-                offset = parser.find_symbol_file_offset(sym)
-                if offset is not None:
-                    data[offset : offset + len(ret_true)] = ret_true
+                sym_info = parser.find_symbol_info(sym)
+                if sym_info:
+                    offset, is_thumb = sym_info
+                    patch = self._get_patch(parser.e_machine, is_thumb, 'true')
+                    data[offset : offset + len(patch)] = patch
                     logger.success(f"[{self.library_path.parent.name}] Patched {sym} (return 1)")
                     patched = True
 
             for sym in ["SSL_get_verify_result"]:
-                offset = parser.find_symbol_file_offset(sym)
-                if offset is not None:
-                    data[offset : offset + len(ret_zero)] = ret_zero
+                sym_info = parser.find_symbol_info(sym)
+                if sym_info:
+                    offset, is_thumb = sym_info
+                    patch = self._get_patch(parser.e_machine, is_thumb, 'zero')
+                    data[offset : offset + len(patch)] = patch
                     logger.success(f"[{self.library_path.parent.name}] Patched {sym} (return 0 / X509_V_OK)")
                     patched = True
 

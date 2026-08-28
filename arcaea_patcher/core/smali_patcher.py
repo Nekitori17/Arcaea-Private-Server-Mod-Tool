@@ -4,7 +4,7 @@ from arcaea_patcher.utils.logger import logger
 
 
 class SmaliPatcher:
-    """Patches Smali bytecode for Java SSL verification bypass."""
+    """Patches Smali bytecode for Java SSL verification bypass and dynamic hooks."""
 
     def __init__(self, decoded_dir: Path):
         self.decoded_dir = decoded_dir
@@ -60,3 +60,59 @@ class SmaliPatcher:
 
             if changed:
                 path.write_text(content, encoding="utf-8")
+
+
+    def inject_domain_hook_loader(self) -> bool:
+        """Injects NekiHookLoader.init(this) into the main Activity's onCreate method."""
+        target_patterns = ["**/Cocos2dxActivity.smali", "**/AppActivity.smali"]
+        injected = False
+
+        for pattern in target_patterns:
+            files = list(self.decoded_dir.glob(pattern))
+            for path in files:
+                content = path.read_text(encoding="utf-8")
+                if "Lmoe/low/arc/custom/NekiHookLoader;->init" in content:
+                    logger.detail(f"NekiHookLoader already injected in {path.name}")
+                    injected = True
+                    continue
+
+                # Locate the code block for the onCreate function.
+                method_match = re.search(
+                    r"(\.method\s+[^\n]*onCreate\(Landroid/os/Bundle;\)V\n)(.*?)(\.end method)",
+                    content,
+                    re.DOTALL,
+                )
+                if not method_match:
+                    continue
+
+                header, body, footer = method_match.groups()
+
+                # Regex Update: Supports both `invoke-super` and `invoke-super/range`
+                super_match = re.search(
+                    r"(invoke-super(?:/range)?\s+\{[^\}]+\},\s+L[^\n]+;->onCreate\(Landroid/os/Bundle;\)V\n)",
+                    body,
+                )
+
+                # Dalvik logic update: Use invoke-static/range to avoid the 16-bit register limit error (v0–v15).
+                # When the Smali file is very long, the parameter variable p0 may exceed v15.
+                hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/low/arc/custom/NekiHookLoader;->init(Landroid/content/Context;)V\n"
+
+                if super_match:
+                    # Insert immediately after the super.onCreate() call
+                    new_body = body.replace(super_match.group(1), super_match.group(1) + hook_call, 1)
+                else:
+                    # If the super function is not found, insert immediately after the .locals declaration.
+                    locals_match = re.search(r"(\s*\.locals\s+\d+\n)", body)
+                    if locals_match:
+                        new_body = body.replace(locals_match.group(1), locals_match.group(1) + hook_call, 1)
+                    else:
+                        new_body = hook_call + body
+
+                new_method = f"{header}{new_body}{footer}"
+                content = content.replace(method_match.group(0), new_method, 1)
+                
+                path.write_text(content, encoding="utf-8")
+                logger.success(f"Injected NekiHookLoader into {path.relative_to(self.decoded_dir)}")
+                injected = True
+
+        return injected

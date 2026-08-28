@@ -1,13 +1,14 @@
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Optional
+
 from arcaea_patcher.config import PatchConfig
 from arcaea_patcher.core.apk_toolchain import ApkToolchain
 from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
 from arcaea_patcher.core.manifest_patcher import ManifestAndSecurityPatcher
 from arcaea_patcher.core.smali_patcher import SmaliPatcher
 from arcaea_patcher.utils.logger import logger
-
 
 class PatchPipeline:
     """Coordinates decompilation, patching, and recompilation phases."""
@@ -34,7 +35,7 @@ class PatchPipeline:
             self.toolchain.decompile(self.config.input_apk, decoded_dir)
             logger.success("APK successfully decoded.")
 
-            # Phase 2: Manifest & Network Security Config
+            # Phase 2 & 3: Manifest & Network Security Config
             manifest_patcher = ManifestAndSecurityPatcher(decoded_dir)
             if self.config.package_name:
                 logger.header("[2/8] Changing Package Name")
@@ -44,11 +45,10 @@ class PatchPipeline:
                 logger.header("[3/8] Injecting Network Security Config")
                 manifest_patcher.inject_network_security_config()
 
-            if self.config.feature_config.expose_internal_data:
+            if getattr(self.config, 'feature_config', None) and self.config.feature_config.expose_internal_data:
                 logger.header("[4/8] Injecting Storage Access Framework Provider")
                 manifest_patcher.inject_documents_provider()
                 
-                # Copy Smali template
                 template_path = Path(__file__).parent.parent / "templates" / "InternalStorageProvider.smali"
                 if template_path.exists():
                     dest_smali_dir = decoded_dir / "smali_classes2" / "moe" / "low" / "arc" / "custom"
@@ -58,26 +58,83 @@ class PatchPipeline:
                 else:
                     logger.warn("InternalStorageProvider.smali template not found!")
 
-            # Phase 3: Native Binary Patching (SSL Bypass + Domain Redirection via Assembly & .rodata)
-            logger.header("[5/8] Patching Native Binaries (.so)")
-            so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
-            if not so_files:
-                logger.warn("No libcocos2dcpp.so binaries found.")
-            for so_file in so_files:
-                patcher = NativeLibraryPatcher(so_file)
-                patcher.patch_domains_and_ssl(
-                    api_host=self.config.server.api_host,
-                    auth_host=self.config.server.auth_host,
-                    custom_mappings=self.config.server.custom_mappings,
-                )
+            # Phase 4: Dynamic Domain Routing via libneki.so (Native Hook)
+            server_cfg = getattr(self.config, 'server', None)
+            has_domain_routing = bool(
+                server_cfg and (server_cfg.api_host or server_cfg.auth_host or getattr(server_cfg, 'custom_mappings', None))
+            )
+            
+            if has_domain_routing:
+                logger.header("[5/8] Injecting Native Domain Redirection (libneki.so)")
+                
+                # Try to import constants; fall back if an error occurs.
+                try:
+                    from arcaea_patcher.constants import API_DOMAINS, AUTH_DOMAINS
+                except ImportError:
+                    API_DOMAINS = ["arcapi-v4.lowiro.com", "arcapi-v3.lowiro.com", "arcaea.lowiro.com"]
+                    AUTH_DOMAINS = ["auth-v2.lowiro.com", "auth.lowiro.com"]
 
-            # Phase 4: Java Bytecode SSL Patching
-            if self.config.patch_java_ssl:
+                domain_lines = []
+                if self.config.server.api_host:
+                    for d in API_DOMAINS:
+                        domain_lines.append(f"{d}={self.config.server.api_host}")
+                if self.config.server.auth_host:
+                    for d in AUTH_DOMAINS:
+                        domain_lines.append(f"{d}={self.config.server.auth_host}")
+                if getattr(server_cfg, 'custom_mappings', None):
+                    for orig, target in server_cfg.custom_mappings.items():
+                        domain_lines.append(f"{orig}={target}")
+
+                # 1. Write domain.cfg to assets/
+                assets_dir = decoded_dir / "assets"
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                (assets_dir / "domain.cfg").write_text("\n".join(domain_lines) + "\n", encoding="utf-8")
+                logger.detail(f"Created assets/domain.cfg with {len(domain_lines)} mapping(s)")
+
+                # 2. Inject libneki.so into lib/<abi>/
+                templates_libs = Path(__file__).parent.parent / "templates" / "libs"
+                lib_dir = decoded_dir / "lib"
+                if lib_dir.exists():
+                    for abi_dir in lib_dir.iterdir():
+                        if abi_dir.is_dir():
+                            src_so = templates_libs / abi_dir.name / "libneki.so"
+                            if src_so.exists():
+                                shutil.copy(src_so, abi_dir / "libneki.so")
+                                logger.detail(f"Injected libneki.so into lib/{abi_dir.name}/")
+                            else:
+                                logger.warn(f"Pre-built libneki.so not found for ABI: {abi_dir.name}")
+
+                # 3. Inject NekiHookLoader.smali
+                loader_template = Path(__file__).parent.parent / "templates" / "NekiHookLoader.smali"
+                if loader_template.exists():
+                    dest_smali_dir = decoded_dir / "smali_classes2" / "moe" / "low" / "arc" / "custom"
+                    dest_smali_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(loader_template, dest_smali_dir / "NekiHookLoader.smali")
+                    logger.detail("Injected NekiHookLoader.smali")
+                else:
+                    logger.warn("NekiHookLoader.smali template not found!")
+
+                # 4. Inject hook trigger into Activity Smali
+                smali_patcher = SmaliPatcher(decoded_dir)
+                smali_patcher.inject_domain_hook_loader()
+
+            # Phase 5: Native SSL Bypass (Static binary patch)
+            if getattr(self.config, 'patch_native_ssl', False):
+                logger.header("[6/8] Patching Native SSL Verification")
+                so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
+                if not so_files:
+                    logger.warn("No libcocos2dcpp.so binaries found.")
+                for so_file in so_files:
+                    patcher = NativeLibraryPatcher(so_file)
+                    patcher.patch_ssl_bypass()
+
+            # Phase 6: Java Bytecode SSL Patching
+            if getattr(self.config, 'patch_java_ssl', False):
                 logger.header("[7/8] Patching Java Bytecode")
                 smali_patcher = SmaliPatcher(decoded_dir)
                 smali_patcher.patch_ssl_pinning()
 
-            # Phase 5: Rebuild, Align, and Sign
+            # Phase 7: Rebuild, Align, and Sign
             logger.header("[8/8] Rebuilding & Signing APK")
             self.toolchain.build(decoded_dir, unaligned_apk)
             logger.detail("Rebuilt APK with apktool.")
@@ -92,5 +149,5 @@ class PatchPipeline:
         finally:
             try:
                 shutil.rmtree(temp_dir_path, ignore_errors=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warn(f"Failed to cleanup temp directory: {e}")

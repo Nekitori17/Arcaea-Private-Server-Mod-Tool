@@ -1,6 +1,5 @@
 # Custom Domain Routing
-# api_host MUST be <= 20 bytes
-# auth_host MUST be <= 18 bytes
+# Supports any domain length or IP address!
 server:
   api_host: "arc-api.nekitori17.com"
   auth_host: "ar-au.nekitori17.com"

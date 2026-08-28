@@ -5,20 +5,17 @@ A modular, lightweight, and automated Python tool designed to unpack, patch, reb
 This tool focuses on:
 
 - **Native & Java SSL Verification Bypass**: Patches native OpenSSL routines (`SSL_CTX_set_verify`, `X509_verify_cert`, `SSL_get_verify_result`) and Java `Cocos2dxHttpURLConnection`.
-- **Native Assembly & `.rodata` Domain Redirection**: Patches hardcoded domain strings and reconstructs inline C++ `std::string` SSO (Short String Optimization) structures in `libcocos2dcpp.so`.
+- **Dynamic Native Hook Domain Redirection (`libneki.so`)**: Uses PLT hooking to intercept and redirect DNS lookups and network requests seamlessly at runtime without domain length limits!
+- **Storage Access Framework Integration**: Exposes internal app data directory (`/data/data/<pkg>`) for file managers without root.
 - **Automated Build & Signing Pipeline**: Auto-discovers Android SDK build-tools, handles alignment with `zipalign`, and signs with `apksigner`.
 
 ---
 
-## ⚠️ Important: Domain Length Limits
+## 🚀 Dynamic Domain Routing (`domain.cfg`)
 
-Due to native C++ `std::string` stack buffer (SSO) constraints inside `libcocos2dcpp.so`, custom hostnames must **not** exceed the maximum length of the original buffers:
-
-| Target Endpoint               | Original Domain        |     Max Length     | Example                      |
-| :---------------------------- | :--------------------- | :----------------: | :--------------------------- |
-| **API Host** (`--api-host`)   | `arcapi-v4.lowiro.com` | **$\le$ 20 chars** | `arc-api.nekitori.com` (20B) |
-| **Auth Host** (`--auth-host`) | `auth-v2.lowiro.com`   | **$\le$ 18 chars** | `au-v2.nekitori.com` (18B)   |
-| **Unified Host** (Combined)   | _Both endpoints_       | **$\le$ 18 chars** | `ar-sv.nekitori.com` (18B)   |
+Domain redirection is handled at runtime by `libneki.so` (pre-compiled for both **armeabi-v7a** and **arm64-v8a**).
+- **No string length limits**: Route to any domain name or IP address.
+- **Runtime editable**: `domain.cfg` is generated automatically from your `config.yml` during patching, and can also be modified in internal storage.
 
 ---
 
@@ -134,8 +131,7 @@ You can define custom hostnames and signing credentials via YAML:
 
 ```yaml
 # Custom Domain Routing
-# api_host MUST be <= 20 bytes
-# auth_host MUST be <= 18 bytes
+# Supports any domain length or IP address!
 server:
   api_host: "arc-api.nekitori17.com"
   auth_host: "ar-au.nekitori17.com"
@@ -173,8 +169,8 @@ options:
   -h, --help            Show this help message and exit
   -o, --output OUTPUT   Destination path for the patched APK file
   -c, --config CONFIG   Optional YAML configuration file
-  --api-host API_HOST   Custom hostname for API endpoints (max 20 chars)
-  --auth-host AUTH_HOST Custom hostname for Auth endpoints (max 18 chars)
+  --api-host API_HOST   Custom hostname for API endpoints
+  --auth-host AUTH_HOST Custom hostname for Auth endpoints
   --package-name PKG    Custom package name for the patched APK
 ```
 
@@ -186,5 +182,3 @@ options:
   Ensure Java JDK is installed from [Adoptium](https://adoptium.net/temurin/releases) and added to your system `PATH`. Restart your terminal after installation.
 - **`Could not find 'zipalign'` / `'apksigner'`**:
   Make sure you either set `ANDROID_HOME`, place an extracted build-tools directory in `build-tools/`, or install `zipalign` in your system `PATH`.
-- **Hostname exceeded buffer warning**:
-  Ensure your `--api-host` is $\le 20$ characters and `--auth-host` is $\le 18$ characters. If your domain is longer, use a shorter subdomain or custom domain.
