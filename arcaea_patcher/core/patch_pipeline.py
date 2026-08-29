@@ -1,13 +1,13 @@
 from pathlib import Path
 import shutil
 import tempfile
-
 from arcaea_patcher.config import PatchConfig
 from arcaea_patcher.core.apk_toolchain import ApkToolchain
-from arcaea_patcher.core.ssl_patcher import NativeLibraryPatcher
+from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
 from arcaea_patcher.core.manifest_patcher import ManifestAndSecurityPatcher
 from arcaea_patcher.core.smali_patcher import SmaliPatcher
 from arcaea_patcher.utils.logger import logger
+
 
 class PatchPipeline:
     """Coordinates decompilation, patching, and recompilation phases."""
@@ -15,6 +15,13 @@ class PatchPipeline:
     def __init__(self, config: PatchConfig, toolchain: ApkToolchain):
         self.config = config
         self.toolchain = toolchain
+
+    def _get_target_smali_dir(self, decoded_dir: Path) -> Path:
+        """Finds the optimal smali directory to inject custom classes."""
+        smali_classes2 = decoded_dir / "smali_classes2"
+        if smali_classes2.exists():
+            return smali_classes2
+        return decoded_dir / "smali"
 
     def execute(self) -> None:
         logger.header("Starting APK Patch Pipeline")
@@ -34,7 +41,7 @@ class PatchPipeline:
             self.toolchain.decompile(self.config.input_apk, decoded_dir)
             logger.success("APK successfully decoded.")
 
-            # Phase 2 & 3: Manifest & Network Security Config
+            # Phase 2: Manifest & Network Security Config
             manifest_patcher = ManifestAndSecurityPatcher(decoded_dir)
             if self.config.package_name:
                 logger.header("[2/8] Changing Package Name")
@@ -44,13 +51,16 @@ class PatchPipeline:
                 logger.header("[3/8] Injecting Network Security Config")
                 manifest_patcher.inject_network_security_config()
 
-            if getattr(self.config, 'feature_config', None) and self.config.feature_config.expose_internal_data:
+            # Phase 3: Storage Access Framework Provider
+            if self.config.feature_config.expose_internal_data:
                 logger.header("[4/8] Injecting Storage Access Framework Provider")
                 manifest_patcher.inject_documents_provider()
                 
+                # Copy Smali template (Tự động chọn thư mục smali)
                 template_path = Path(__file__).parent.parent / "templates" / "InternalStorageProvider.smali"
                 if template_path.exists():
-                    dest_smali_dir = decoded_dir / "smali_classes2" / "moe" / "low" / "arc" / "custom"
+                    target_smali_base = self._get_target_smali_dir(decoded_dir)
+                    dest_smali_dir = target_smali_base / "moe" / "low" / "arc" / "custom"
                     dest_smali_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy(template_path, dest_smali_dir / "InternalStorageProvider.smali")
                     logger.detail("Injected InternalStorageProvider.smali")
@@ -58,9 +68,9 @@ class PatchPipeline:
                     logger.warn("InternalStorageProvider.smali template not found!")
 
             # Phase 4: Dynamic Domain Routing via libneki.so (Native Hook)
-            server_cfg = getattr(self.config, 'server', None)
+            server_cfg = self.config.server
             has_domain_routing = bool(
-                server_cfg and (server_cfg.api_host or server_cfg.auth_host or getattr(server_cfg, 'custom_mappings', None))
+                server_cfg and (server_cfg.api_host or server_cfg.auth_host or server_cfg.custom_mappings)
             )
             
             if has_domain_routing:
@@ -103,10 +113,11 @@ class PatchPipeline:
                             else:
                                 logger.warn(f"Pre-built libneki.so not found for ABI: {abi_dir.name}")
 
-                # 3. Inject NekiHookLoader.smali
+                # 3. Inject NekiHookLoader.smali (Tự động chọn thư mục smali)
                 loader_template = Path(__file__).parent.parent / "templates" / "NekiHookLoader.smali"
                 if loader_template.exists():
-                    dest_smali_dir = decoded_dir / "smali_classes2" / "moe" / "low" / "arc" / "custom"
+                    target_smali_base = self._get_target_smali_dir(decoded_dir)
+                    dest_smali_dir = target_smali_base / "moe" / "low" / "arc" / "custom"
                     dest_smali_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy(loader_template, dest_smali_dir / "NekiHookLoader.smali")
                     logger.detail("Injected NekiHookLoader.smali")
@@ -117,18 +128,17 @@ class PatchPipeline:
                 smali_patcher = SmaliPatcher(decoded_dir)
                 smali_patcher.inject_domain_hook_loader()
 
-            # Phase 5: Native SSL Bypass (Static binary patch)
-            if getattr(self.config, 'patch_native_ssl', False):
-                logger.header("[6/8] Patching Native SSL Verification")
-                so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
-                if not so_files:
-                    logger.warn("No libcocos2dcpp.so binaries found.")
-                for so_file in so_files:
-                    patcher = NativeLibraryPatcher(so_file)
-                    patcher.patch_ssl_bypass()
+            # Phase 5: Native Binary Patching (SSL Bypass + Domain Redirection via Assembly & .rodata)
+            logger.header("[6/8] Patching Native Binaries (.so)")
+            so_files = list(decoded_dir.glob("lib/**/libcocos2dcpp.so"))
+            if not so_files:
+                logger.warn("No libcocos2dcpp.so binaries found.")
+            for so_file in so_files:
+                patcher = NativeLibraryPatcher(so_file)
+                patcher.patch_ssl_bypass()
 
             # Phase 6: Java Bytecode SSL Patching
-            if getattr(self.config, 'patch_java_ssl', False):
+            if self.config.patch_java_ssl:
                 logger.header("[7/8] Patching Java Bytecode")
                 smali_patcher = SmaliPatcher(decoded_dir)
                 smali_patcher.patch_ssl_pinning()
@@ -148,5 +158,5 @@ class PatchPipeline:
         finally:
             try:
                 shutil.rmtree(temp_dir_path, ignore_errors=True)
-            except Exception as e:
-                logger.warn(f"Failed to cleanup temp directory: {e}")
+            except Exception:
+                pass

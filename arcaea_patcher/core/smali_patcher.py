@@ -4,7 +4,7 @@ from arcaea_patcher.utils.logger import logger
 
 
 class SmaliPatcher:
-    """Patches Smali bytecode for Java SSL verification bypass and dynamic hooks."""
+    """Patches Smali bytecode for Java SSL verification bypass."""
 
     def __init__(self, decoded_dir: Path):
         self.decoded_dir = decoded_dir
@@ -17,8 +17,9 @@ class SmaliPatcher:
         For boolean (Z) return types the replacement returns ``1`` (true).
         For void (V) methods it emits ``return-void``.
         """
+        # Hỗ trợ \r?\n cho Windows
         method_pattern = re.compile(
-            rf"(\.method\s+[^\n]*{re.escape(method_name)}\([^\n]*\)([VZ])\n)"
+            rf"(\.method\s+[^\n]*{re.escape(method_name)}\([^\n]*\)([VZ])\r?\n)"
             r"(.*?)"
             r"(\.end method)",
             re.DOTALL,
@@ -60,8 +61,7 @@ class SmaliPatcher:
 
             if changed:
                 path.write_text(content, encoding="utf-8")
-
-
+    
     def inject_domain_hook_loader(self) -> bool:
         """Injects NekiHookLoader.init(this) into the main Activity's onCreate method."""
         target_patterns = ["**/Cocos2dxActivity.smali", "**/AppActivity.smali"]
@@ -76,9 +76,9 @@ class SmaliPatcher:
                     injected = True
                     continue
 
-                # Locate the code block for the onCreate function.
+                # Locate the code block for the onCreate function
                 method_match = re.search(
-                    r"(\.method\s+[^\n]*onCreate\(Landroid/os/Bundle;\)V\n)(.*?)(\.end method)",
+                    r"(\.method\s+[^\n]*onCreate\(Landroid/os/Bundle;\)V\r?\n)(.*?)(\.end method)",
                     content,
                     re.DOTALL,
                 )
@@ -89,20 +89,19 @@ class SmaliPatcher:
 
                 # Regex Update: Supports both `invoke-super` and `invoke-super/range`
                 super_match = re.search(
-                    r"(invoke-super(?:/range)?\s+\{[^\}]+\},\s+L[^\n]+;->onCreate\(Landroid/os/Bundle;\)V\n)",
+                    r"(invoke-super(?:/range)?\s+\{[^\}]+\},\s+L[^\n]+;->onCreate\(Landroid/os/Bundle;\)V\r?\n)",
                     body,
                 )
 
                 # Dalvik logic update: Use invoke-static/range to avoid the 16-bit register limit error (v0–v15).
-                # When the Smali file is very long, the parameter variable p0 may exceed v15.
                 hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/low/arc/custom/NekiHookLoader;->init(Landroid/content/Context;)V\n"
 
                 if super_match:
                     # Insert immediately after the super.onCreate() call
                     new_body = body.replace(super_match.group(1), super_match.group(1) + hook_call, 1)
                 else:
-                    # If the super function is not found, insert immediately after the .locals declaration.
-                    locals_match = re.search(r"(\s*\.locals\s+\d+\n)", body)
+                    # If the super function is not found, insert immediately after the .locals declaration
+                    locals_match = re.search(r"(\s*\.locals\s+\d+\r?\n)", body)
                     if locals_match:
                         new_body = body.replace(locals_match.group(1), locals_match.group(1) + hook_call, 1)
                     else:
