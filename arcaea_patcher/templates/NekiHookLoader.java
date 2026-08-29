@@ -10,57 +10,74 @@ import java.io.OutputStream;
 public class NekiHookLoader {
     private static final String TAG = "NekiHookLoader";
     private static final String CONFIG_FILENAME = "domain.cfg";
-    private static boolean sInitialized = false;
+    private static volatile boolean sInitialized = false;
 
-    // Keep only a single JNI function
+    // JNI entry point implemented in libneki.so (neki_hook.c)
     public static native void nativeInit(String configPath);
 
+    /**
+     * Initializes the domain routing and SSL bypass subsystem.
+     * 
+     * @param context Application or Activity context
+     */
     public static synchronized void init(Context context) {
         if (sInitialized) {
+            Log.d(TAG, "NekiHookLoader already initialized, skipping");
             return;
         }
 
         if (context == null) {
-            Log.w(TAG, "Context is null, cannot initialize domain hook");
+            Log.w(TAG, "Context is null, cannot initialize hook loader");
             return;
         }
 
         try {
+            // 1. Prepare target internal storage directory
             File filesDir = context.getFilesDir();
-            if (!filesDir.exists()) {
+            if (filesDir != null && !filesDir.exists()) {
                 filesDir.mkdirs();
             }
 
             File targetConfig = new File(filesDir, CONFIG_FILENAME);
 
-            // FIX: Always extract and overwrite the domain.cfg file from the assets directory 
-            // to prevent cache-related issues when the application is patched with a new IP/Config.
+            // 2. Extract/update domain.cfg from APK assets to internal storage
             try (InputStream in = context.getAssets().open(CONFIG_FILENAME)) {
                 try (OutputStream out = new FileOutputStream(targetConfig)) {
                     byte[] buffer = new byte[4096];
-                    int read;
-                    while ((read = in.read(buffer)) != -1) {
-                        out.write(buffer, 0, read);
+                    int bytesRead;
+                    while ((bytesRead = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, bytesRead);
                     }
+                    out.flush();
                 }
-                Log.i(TAG, "Extracted/Updated domain.cfg from assets to " + targetConfig.getAbsolutePath());
+                Log.i(TAG, "Extracted domain.cfg to: " + targetConfig.getAbsolutePath());
             } catch (Exception e) {
-                Log.d(TAG, "No domain.cfg found in assets. Will skip or use existing.");
+                Log.w(TAG, "No domain.cfg in assets or failed to extract. Proceeding with existing config: " + e.getMessage());
             }
 
-            // Load native library
+            // 3. Pre-load main game engine library (cocos2dcpp) to prevent race condition
+            // where libneki.so searches /proc/self/maps before cocos2dcpp is loaded
+            try {
+                System.loadLibrary("cocos2dcpp");
+                Log.i(TAG, "libcocos2dcpp.so pre-loaded successfully");
+            } catch (Throwable t) {
+                // If it fails or is already loaded by the engine lifecycle, log and continue
+                Log.d(TAG, "libcocos2dcpp.so pre-load skipped: " + t.getMessage());
+            }
+
+            // 4. Load the native hook library
             System.loadLibrary("neki");
             Log.i(TAG, "libneki.so loaded successfully");
 
-            // Initialize hook with config file path
+            // 5. Pass configuration file path and install PLT hooks
             String configPath = targetConfig.exists() ? targetConfig.getAbsolutePath() : "";
             nativeInit(configPath);
-            
+
             sInitialized = true;
-            Log.i(TAG, "Domain hook initialization complete");
+            Log.i(TAG, "NekiHook initialization completed successfully");
 
         } catch (Throwable t) {
-            Log.e(TAG, "Failed to initialize domain hook: " + t.getMessage(), t);
+            Log.e(TAG, "Fatal error during NekiHook initialization: " + t.getMessage(), t);
         }
     }
 }
