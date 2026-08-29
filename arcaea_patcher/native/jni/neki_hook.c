@@ -168,8 +168,8 @@ static int plt_hook(void *module_base, const char *symbol_name, void *new_func, 
 static const char *get_mapped_domain(const char *hostname) {
     if (!hostname) return NULL;
     for (int i = 0; i < g_mapping_count; i++) {
-        // So sánh chuỗi hostname hoặc bắt chứa chữ "lowiro.com"
-        if (strcasecmp(hostname, g_mappings[i].original) == 0 || strstr(hostname, "lowiro.com")) {
+        // A routing rule applies only to its configured hostname.  Matching every
+        if (strcasecmp(hostname, g_mappings[i].original) == 0) {
             return g_mappings[i].target;
         }
     }

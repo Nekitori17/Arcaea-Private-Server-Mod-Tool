@@ -1,11 +1,10 @@
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Optional
 
 from arcaea_patcher.config import PatchConfig
 from arcaea_patcher.core.apk_toolchain import ApkToolchain
-from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
+from arcaea_patcher.core.ssl_patcher import NativeLibraryPatcher
 from arcaea_patcher.core.manifest_patcher import ManifestAndSecurityPatcher
 from arcaea_patcher.core.smali_patcher import SmaliPatcher
 from arcaea_patcher.utils.logger import logger
