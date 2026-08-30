@@ -429,7 +429,7 @@ static void install_all_plt_hooks(void) {
  * JNI Entry Points
  * ------------------------------------------------------------------------- */
 
-JNIEXPORT void JNICALL Java_moe_low_arc_custom_NekiHookLoader_nativeInit(
+JNIEXPORT void JNICALL Java_moe_neki_arc_NekiHookLoader_nativeInit(
         JNIEnv *env, jclass cls, jstring config_path) {
     LOGI("nativeInit invoked from NekiHookLoader");
 

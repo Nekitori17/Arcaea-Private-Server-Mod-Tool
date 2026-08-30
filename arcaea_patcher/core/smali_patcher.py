@@ -68,7 +68,7 @@ class SmaliPatcher:
             "**/Cocos2dxActivity.smali",
         ]
 
-        hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/low/arc/custom/NekiHookLoader;->init(Landroid/content/Context;)V\n"
+        hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/neki/arc/NekiHookLoader;->init(Landroid/content/Context;)V\n"
 
         for pattern in candidate_patterns:
             files = list(self.decoded_dir.glob(pattern))
@@ -76,7 +76,7 @@ class SmaliPatcher:
                 content = path.read_text(encoding="utf-8")
 
                 # Check if hook is already injected
-                if "Lmoe/low/arc/custom/NekiHookLoader;->init" in content:
+                if "Lmoe/neki/arc/NekiHookLoader;->init" in content:
                     logger.detail(f"NekiHookLoader already present in {path.name}")
                     return True
 

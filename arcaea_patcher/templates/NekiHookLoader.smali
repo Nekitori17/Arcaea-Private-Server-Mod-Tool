@@ -1,4 +1,4 @@
-.class public Lmoe/low/arc/custom/NekiHookLoader;
+.class public Lmoe/neki/arc/NekiHookLoader;
 .super Ljava/lang/Object;
 .source "NekiHookLoader.java"
 
@@ -18,7 +18,7 @@
     .line 13
     const/4 v0, 0x0
 
-    sput-boolean v0, Lmoe/low/arc/custom/NekiHookLoader;->sInitialized:Z
+    sput-boolean v0, Lmoe/neki/arc/NekiHookLoader;->sInitialized:Z
 
     return-void
 .end method
@@ -35,13 +35,13 @@
 .method public static declared-synchronized init(Landroid/content/Context;)V
     .locals 6
 
-    const-class v0, Lmoe/low/arc/custom/NekiHookLoader;
+    const-class v0, Lmoe/neki/arc/NekiHookLoader;
 
     monitor-enter v0
 
     .line 24
     :try_start_0
-    sget-boolean v1, Lmoe/low/arc/custom/NekiHookLoader;->sInitialized:Z
+    sget-boolean v1, Lmoe/neki/arc/NekiHookLoader;->sInitialized:Z
 
     if-eqz v1, :cond_0
 
@@ -220,7 +220,7 @@
     move-exception v1
 
     :try_start_9
-    invoke-static {v3, v1}, Lmoe/low/arc/custom/NekiHookLoader$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
+    invoke-static {v3, v1}, Lmoe/neki/arc/NekiHookLoader$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
 
     :goto_1
     throw v3
@@ -244,7 +244,7 @@
     move-exception p0
 
     :try_start_b
-    invoke-static {v1, p0}, Lmoe/low/arc/custom/NekiHookLoader$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
+    invoke-static {v1, p0}, Lmoe/neki/arc/NekiHookLoader$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
 
     :cond_5
     :goto_2
@@ -369,12 +369,12 @@
 
     .line 74
     :goto_5
-    invoke-static {p0}, Lmoe/low/arc/custom/NekiHookLoader;->nativeInit(Ljava/lang/String;)V
+    invoke-static {p0}, Lmoe/neki/arc/NekiHookLoader;->nativeInit(Ljava/lang/String;)V
 
     .line 76
     const/4 p0, 0x1
 
-    sput-boolean p0, Lmoe/low/arc/custom/NekiHookLoader;->sInitialized:Z
+    sput-boolean p0, Lmoe/neki/arc/NekiHookLoader;->sInitialized:Z
 
     .line 77
     const-string p0, "NekiHookLoader"

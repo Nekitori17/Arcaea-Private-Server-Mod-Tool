@@ -60,7 +60,7 @@ class PatchPipeline:
                 template_path = Path(__file__).parent.parent / "templates" / "InternalStorageProvider.smali"
                 if template_path.exists():
                     target_smali_base = self._get_target_smali_dir(decoded_dir)
-                    dest_smali_dir = target_smali_base / "moe" / "low" / "arc" / "custom"
+                    dest_smali_dir = target_smali_base / "moe" / "neki" / "arc"
                     dest_smali_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy(template_path, dest_smali_dir / "InternalStorageProvider.smali")
                     logger.detail("Injected InternalStorageProvider.smali")
@@ -117,7 +117,7 @@ class PatchPipeline:
                 loader_template = Path(__file__).parent.parent / "templates" / "NekiHookLoader.smali"
                 if loader_template.exists():
                     target_smali_base = self._get_target_smali_dir(decoded_dir)
-                    dest_smali_dir = target_smali_base / "moe" / "low" / "arc" / "custom"
+                    dest_smali_dir = target_smali_base / "moe" / "neki" / "arc"
                     dest_smali_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy(loader_template, dest_smali_dir / "NekiHookLoader.smali")
                     logger.detail("Injected NekiHookLoader.smali")

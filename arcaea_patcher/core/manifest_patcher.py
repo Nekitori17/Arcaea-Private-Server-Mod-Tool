@@ -66,7 +66,7 @@ class ManifestAndSecurityPatcher:
 
         provider_xml = f"""
         <provider
-            android:name="moe.low.arc.custom.InternalStorageProvider"
+            android:name="moe.neki.arc.InternalStorageProvider"
             android:authorities="{current_pkg}.documents"
             android:exported="true"
             android:grantUriPermissions="true"

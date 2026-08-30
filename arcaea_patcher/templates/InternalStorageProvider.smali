@@ -1,4 +1,4 @@
-.class public Lmoe/low/arc/custom/InternalStorageProvider;
+.class public Lmoe/neki/arc/InternalStorageProvider;
 .super Landroid/provider/DocumentsProvider;
 .source "InternalStorageProvider.java"
 
@@ -56,7 +56,7 @@
 
     aput-object v10, v1, v9
 
-    sput-object v1, Lmoe/low/arc/custom/InternalStorageProvider;->DEFAULT_ROOT_PROJECTION:[Ljava/lang/String;
+    sput-object v1, Lmoe/neki/arc/InternalStorageProvider;->DEFAULT_ROOT_PROJECTION:[Ljava/lang/String;
 
     .line 25
     new-array v0, v0, [Ljava/lang/String;
@@ -81,7 +81,7 @@
 
     aput-object v1, v0, v9
 
-    sput-object v0, Lmoe/low/arc/custom/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
+    sput-object v0, Lmoe/neki/arc/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
 
     return-void
 .end method
@@ -124,7 +124,7 @@
     aget-object v3, v0, v2
 
     .line 233
-    invoke-direct {p0, v3}, Lmoe/low/arc/custom/InternalStorageProvider;->deleteRecursively(Ljava/io/File;)Z
+    invoke-direct {p0, v3}, Lmoe/neki/arc/InternalStorageProvider;->deleteRecursively(Ljava/io/File;)Z
 
     .line 232
     add-int/lit8 v2, v2, 0x1
@@ -149,7 +149,7 @@
     move-result-object p1
 
     .line 79
-    invoke-direct {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getRootFile()Ljava/io/File;
+    invoke-direct {p0}, Lmoe/neki/arc/InternalStorageProvider;->getRootFile()Ljava/io/File;
 
     move-result-object v0
 
@@ -233,7 +233,7 @@
     .end annotation
 
     .line 50
-    invoke-direct {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getRootFile()Ljava/io/File;
+    invoke-direct {p0}, Lmoe/neki/arc/InternalStorageProvider;->getRootFile()Ljava/io/File;
 
     move-result-object v0
 
@@ -278,7 +278,7 @@
     if-eqz v2, :cond_2
 
     .line 60
-    invoke-direct {p0, v0, v1}, Lmoe/low/arc/custom/InternalStorageProvider;->isPathSafe(Ljava/io/File;Ljava/io/File;)Z
+    invoke-direct {p0, v0, v1}, Lmoe/neki/arc/InternalStorageProvider;->isPathSafe(Ljava/io/File;Ljava/io/File;)Z
 
     move-result v0
 
@@ -340,13 +340,13 @@
     .locals 2
 
     .line 43
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v0
 
     if-eqz v0, :cond_0
 
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v0
 
@@ -361,7 +361,7 @@
     .line 44
     new-instance v0, Ljava/io/File;
 
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v1
 
@@ -377,7 +377,7 @@
 
     .line 46
     :cond_0
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v0
 
@@ -413,7 +413,7 @@
 
     move-result-object p1
 
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getTypeForName(Ljava/lang/String;)Ljava/lang/String;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getTypeForName(Ljava/lang/String;)Ljava/lang/String;
 
     move-result-object p1
 
@@ -478,7 +478,7 @@
     if-nez p2, :cond_0
 
     .line 270
-    invoke-direct {p0, p3}, Lmoe/low/arc/custom/InternalStorageProvider;->getDocIdForFile(Ljava/io/File;)Ljava/lang/String;
+    invoke-direct {p0, p3}, Lmoe/neki/arc/InternalStorageProvider;->getDocIdForFile(Ljava/io/File;)Ljava/lang/String;
 
     move-result-object p2
 
@@ -486,7 +486,7 @@
 
     .line 272
     :cond_0
-    invoke-direct {p0, p2}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p2}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p3
 
@@ -552,7 +552,7 @@
     .line 287
     const-string p2, "mime_type"
 
-    invoke-direct {p0, p3}, Lmoe/low/arc/custom/InternalStorageProvider;->getTypeForFile(Ljava/io/File;)Ljava/lang/String;
+    invoke-direct {p0, p3}, Lmoe/neki/arc/InternalStorageProvider;->getTypeForFile(Ljava/io/File;)Ljava/lang/String;
 
     move-result-object v1
 
@@ -658,7 +658,7 @@
     .end annotation
 
     .line 196
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
@@ -683,11 +683,11 @@
     invoke-direct {v0, p1, p3}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
 
     .line 203
-    invoke-direct {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getRootFile()Ljava/io/File;
+    invoke-direct {p0}, Lmoe/neki/arc/InternalStorageProvider;->getRootFile()Ljava/io/File;
 
     move-result-object p1
 
-    invoke-direct {p0, p1, v0}, Lmoe/low/arc/custom/InternalStorageProvider;->isPathSafe(Ljava/io/File;Ljava/io/File;)Z
+    invoke-direct {p0, p1, v0}, Lmoe/neki/arc/InternalStorageProvider;->isPathSafe(Ljava/io/File;Ljava/io/File;)Z
 
     move-result p1
 
@@ -714,7 +714,7 @@
 
     .line 213
     :goto_0
-    invoke-direct {p0, v0}, Lmoe/low/arc/custom/InternalStorageProvider;->getDocIdForFile(Ljava/io/File;)Ljava/lang/String;
+    invoke-direct {p0, v0}, Lmoe/neki/arc/InternalStorageProvider;->getDocIdForFile(Ljava/io/File;)Ljava/lang/String;
 
     move-result-object p1
     :try_end_0
@@ -775,12 +775,12 @@
     .end annotation
 
     .line 221
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
     .line 222
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->deleteRecursively(Ljava/io/File;)Z
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->deleteRecursively(Ljava/io/File;)Z
 
     move-result p1
 
@@ -809,12 +809,12 @@
     .end annotation
 
     .line 242
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
     .line 243
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getTypeForFile(Ljava/io/File;)Ljava/lang/String;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getTypeForFile(Ljava/io/File;)Ljava/lang/String;
 
     move-result-object p1
 
@@ -828,12 +828,12 @@
     const/4 v0, 0x0
 
     :try_start_0
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
     .line 142
-    invoke-direct {p0, p2}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p2}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p2
 
@@ -912,7 +912,7 @@
     .end annotation
 
     .line 176
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
@@ -1051,13 +1051,13 @@
     goto :goto_0
 
     :cond_0
-    sget-object p2, Lmoe/low/arc/custom/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
+    sget-object p2, Lmoe/neki/arc/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
 
     :goto_0
     invoke-direct {p3, p2}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
 
     .line 164
-    invoke-direct {p0, p1}, Lmoe/low/arc/custom/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
+    invoke-direct {p0, p1}, Lmoe/neki/arc/InternalStorageProvider;->getFileForDocId(Ljava/lang/String;)Ljava/io/File;
 
     move-result-object p1
 
@@ -1082,7 +1082,7 @@
     .line 168
     const/4 v2, 0x0
 
-    invoke-direct {p0, p3, v2, v1}, Lmoe/low/arc/custom/InternalStorageProvider;->includeFile(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
+    invoke-direct {p0, p3, v2, v1}, Lmoe/neki/arc/InternalStorageProvider;->includeFile(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
 
     .line 167
     add-int/lit8 v0, v0, 0x1
@@ -1110,7 +1110,7 @@
     goto :goto_0
 
     :cond_0
-    sget-object p2, Lmoe/low/arc/custom/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
+    sget-object p2, Lmoe/neki/arc/InternalStorageProvider;->DEFAULT_DOCUMENT_PROJECTION:[Ljava/lang/String;
 
     :goto_0
     invoke-direct {v0, p2}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
@@ -1118,7 +1118,7 @@
     .line 157
     const/4 p2, 0x0
 
-    invoke-direct {p0, v0, p1, p2}, Lmoe/low/arc/custom/InternalStorageProvider;->includeFile(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
+    invoke-direct {p0, v0, p1, p2}, Lmoe/neki/arc/InternalStorageProvider;->includeFile(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
 
     .line 158
     return-object v0
@@ -1140,13 +1140,13 @@
     goto :goto_0
 
     :cond_0
-    sget-object p1, Lmoe/low/arc/custom/InternalStorageProvider;->DEFAULT_ROOT_PROJECTION:[Ljava/lang/String;
+    sget-object p1, Lmoe/neki/arc/InternalStorageProvider;->DEFAULT_ROOT_PROJECTION:[Ljava/lang/String;
 
     :goto_0
     invoke-direct {v0, p1}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
 
     .line 96
-    invoke-direct {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getRootFile()Ljava/io/File;
+    invoke-direct {p0}, Lmoe/neki/arc/InternalStorageProvider;->getRootFile()Ljava/io/File;
 
     move-result-object p1
 
@@ -1157,7 +1157,7 @@
     nop
 
     .line 101
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v1
 
@@ -1169,7 +1169,7 @@
 
     .line 103
     :try_start_0
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v1
 
@@ -1178,7 +1178,7 @@
     move-result-object v1
 
     .line 104
-    invoke-virtual {p0}, Lmoe/low/arc/custom/InternalStorageProvider;->getContext()Landroid/content/Context;
+    invoke-virtual {p0}, Lmoe/neki/arc/InternalStorageProvider;->getContext()Landroid/content/Context;
 
     move-result-object v4
 

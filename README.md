@@ -138,7 +138,7 @@ server:
 
 # Custom Package Name (Optional)
 # Change the APK package name to install alongside the original app
-package_name: "moe.low.arc.custom"
+package_name: "moe.neki.arc"
 
 features:
   # Expose Internal App Data via Storage Access Framework
