@@ -7,13 +7,13 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class NekiHookLoader {
-    private static final String TAG = "NekiHookLoader";
+public class NekiLoader {
+    private static final String TAG = "NekiLoader";
     private static final String CONFIG_FILENAME = "domain.cfg";
     private static volatile boolean sInitialized = false;
 
-    // JNI entry point implemented in libneki.so (neki_hook.c)
-    public static native void nativeInit(String configPath);
+    // JNI entry point implemented in libneki.so (Main.c)
+    public static native void nativeInit();
 
     /**
      * Initializes the domain routing and SSL bypass subsystem.
@@ -22,7 +22,7 @@ public class NekiHookLoader {
      */
     public static synchronized void init(Context context) {
         if (sInitialized) {
-            Log.d(TAG, "NekiHookLoader already initialized, skipping");
+            Log.d(TAG, "NekiLoader already initialized, skipping");
             return;
         }
 
@@ -55,25 +55,13 @@ public class NekiHookLoader {
                 Log.w(TAG, "No domain.cfg in assets or failed to extract. Proceeding with existing config: " + e.getMessage());
             }
 
-            // 3. Pre-load main game engine library (cocos2dcpp) to prevent race condition
-            // where libneki.so searches /proc/self/maps before cocos2dcpp is loaded
-            try {
-                System.loadLibrary("cocos2dcpp");
-                Log.i(TAG, "libcocos2dcpp.so pre-loaded successfully");
-            } catch (Throwable t) {
-                // If it fails or is already loaded by the engine lifecycle, log and continue
-                Log.d(TAG, "libcocos2dcpp.so pre-load skipped: " + t.getMessage());
-            }
-
-            // 4. Load the native hook library
+            // 3. Load the native hook library
             System.loadLibrary("neki");
             Log.i(TAG, "libneki.so loaded successfully");
 
-            // 5. Pass configuration file path and install PLT hooks
-            String configPath = targetConfig.exists() ? targetConfig.getAbsolutePath() : "";
-            nativeInit(configPath);
-
+            nativeInit();
             sInitialized = true;
+
             Log.i(TAG, "NekiHook initialization completed successfully");
 
         } catch (Throwable t) {

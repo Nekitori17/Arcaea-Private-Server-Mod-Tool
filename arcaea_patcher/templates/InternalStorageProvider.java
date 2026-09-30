@@ -1,5 +1,6 @@
 package moe.neki.arc;
 
+import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.os.CancellationSignal;
@@ -10,19 +11,21 @@ import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 
 public class InternalStorageProvider extends DocumentsProvider {
 
     private static final String DEFAULT_ROOT_ID = "root";
-    private static final String[] DEFAULT_ROOT_PROJECTION = new String[]{
+    private static final String[] DEFAULT_ROOT_PROJECTION = new String[] {
             DocumentsContract.Root.COLUMN_ROOT_ID,
+            DocumentsContract.Root.COLUMN_MIME_TYPES,
             DocumentsContract.Root.COLUMN_FLAGS,
             DocumentsContract.Root.COLUMN_ICON,
             DocumentsContract.Root.COLUMN_TITLE,
             DocumentsContract.Root.COLUMN_DOCUMENT_ID,
             DocumentsContract.Root.COLUMN_AVAILABLE_BYTES
     };
-    private static final String[] DEFAULT_DOCUMENT_PROJECTION = new String[]{
+    private static final String[] DEFAULT_DOCUMENT_PROJECTION = new String[] {
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -37,29 +40,37 @@ public class InternalStorageProvider extends DocumentsProvider {
     }
 
     /**
-     * Helper method: Get the root directory (prevents code duplication)
+     * Safely retrieve the root directory and avoid NullPointerException.
      */
-    private File getRootFile() {
-        if (getContext() != null && getContext().getApplicationInfo().dataDir != null) {
-            return new File(getContext().getApplicationInfo().dataDir);
+    private File getRootFile() throws FileNotFoundException {
+        Context context = getContext();
+        if (context == null) {
+            throw new FileNotFoundException("Context is not available");
         }
-        return getContext().getFilesDir().getParentFile();
+
+        File root = null;
+        if (context.getApplicationInfo() != null && context.getApplicationInfo().dataDir != null) {
+            root = new File(context.getApplicationInfo().dataDir);
+        } else if (context.getFilesDir() != null) {
+            root = context.getFilesDir().getParentFile();
+        }
+
+        if (root == null || !root.exists()) {
+            throw new FileNotFoundException("App root directory is not accessible");
+        }
+        return root;
     }
 
     private File getFileForDocId(String documentId) throws FileNotFoundException {
         File root = getRootFile();
         File target = root;
-        
-        if (!DEFAULT_ROOT_ID.equals(documentId) && documentId != null && !documentId.isEmpty()) {
+
+        if (documentId != null && !documentId.isEmpty() && !DEFAULT_ROOT_ID.equals(documentId)) {
             target = new File(root, documentId);
         }
-        
-        if (!target.exists()) {
-            throw new FileNotFoundException("Missing file for " + documentId);
-        }
-        if (!isPathSafe(root, target)) {
-            // Block path traversal attacks
-            throw new FileNotFoundException("Missing file for " + documentId);
+
+        if (!target.exists() || !isPathSafe(root, target)) {
+            throw new FileNotFoundException("Missing or unauthorized file for: " + documentId);
         }
         return target;
     }
@@ -69,72 +80,68 @@ public class InternalStorageProvider extends DocumentsProvider {
             String rootPath = root.getCanonicalPath();
             String targetPath = target.getCanonicalPath();
             return targetPath.equals(rootPath) || targetPath.startsWith(rootPath + File.separator);
-        } catch (Exception e) {
+        } catch (IOException e) {
             return false;
         }
     }
 
     private String getDocIdForFile(File file) {
-        String path = file.getAbsolutePath();
-        String rootPath = getRootFile().getAbsolutePath();
-                            
-        if (rootPath.equals(path)) {
-            return DEFAULT_ROOT_ID;
+        try {
+            File root = getRootFile();
+            String canonicalFile = file.getCanonicalPath();
+            String canonicalRoot = root.getCanonicalPath();
+
+            if (canonicalRoot.equals(canonicalFile)) {
+                return DEFAULT_ROOT_ID;
+            }
+
+            String rootPrefix = canonicalRoot.endsWith(File.separator) ? canonicalRoot : canonicalRoot + File.separator;
+            if (canonicalFile.startsWith(rootPrefix)) {
+                return canonicalFile.substring(rootPrefix.length());
+            }
+            return canonicalFile;
+        } catch (Exception e) {
+            return file.getAbsolutePath();
         }
-        
-        // Prevent unsafe prefix matching
-        String rootPrefix = rootPath.endsWith(File.separator) ? rootPath : rootPath + File.separator;
-        if (path.startsWith(rootPrefix)) {
-            return path.substring(rootPrefix.length());
-        }
-        return path;
     }
 
     @Override
     public Cursor queryRoots(String[] projection) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_ROOT_PROJECTION);
         File root = getRootFile();
-        
+
         String appName = "Arcaea";
         int appIcon = android.R.drawable.ic_dialog_info;
-        
-        if (getContext() != null) {
+
+        Context context = getContext();
+        if (context != null) {
             try {
-                android.content.pm.PackageManager pm = getContext().getPackageManager();
-                android.content.pm.ApplicationInfo appInfo = getContext().getApplicationInfo();
-                
+                android.content.pm.PackageManager pm = context.getPackageManager();
+                android.content.pm.ApplicationInfo appInfo = context.getApplicationInfo();
+
                 CharSequence label = pm.getApplicationLabel(appInfo);
-                if (label != null) {
-                    appName = label.toString();
-                }
-                
+                appName = label.toString();
                 if (appInfo.icon != 0) {
                     appIcon = appInfo.icon;
                 }
-            } catch (Exception e) {
-
+            } catch (Exception ignored) {
             }
         }
 
         final MatrixCursor.RowBuilder row = result.newRow();
         row.add(DocumentsContract.Root.COLUMN_ROOT_ID, DEFAULT_ROOT_ID);
+        row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");
         row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, DEFAULT_ROOT_ID);
-        
         row.add(DocumentsContract.Root.COLUMN_TITLE, appName);
-        row.add(DocumentsContract.Root.COLUMN_FLAGS, 
-                DocumentsContract.Root.FLAG_SUPPORTS_CREATE | 
-                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD |
-                DocumentsContract.Root.FLAG_LOCAL_ONLY);
+        row.add(DocumentsContract.Root.COLUMN_FLAGS,
+                DocumentsContract.Root.FLAG_SUPPORTS_CREATE |
+                        DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD |
+                        DocumentsContract.Root.FLAG_LOCAL_ONLY);
         row.add(DocumentsContract.Root.COLUMN_ICON, appIcon);
-        
         row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, root.getFreeSpace());
         return result;
     }
 
-    /**
-     * Required by FLAG_SUPPORTS_IS_CHILD (Android 11+).
-     * Without this, persistable URI permission grants will throw SecurityException.
-     */
     @Override
     public boolean isChildDocument(String parentDocumentId, String documentId) {
         try {
@@ -142,9 +149,7 @@ public class InternalStorageProvider extends DocumentsProvider {
             File child = getFileForDocId(documentId);
             String parentPath = parent.getCanonicalPath();
             String childPath = child.getCanonicalPath();
-            
-            // A document is valid if it is the parent itself, 
-            // or a child folder or file located within the parent.
+
             return parentPath.equals(childPath) || childPath.startsWith(parentPath + File.separator);
         } catch (Exception e) {
             return false;
@@ -159,7 +164,8 @@ public class InternalStorageProvider extends DocumentsProvider {
     }
 
     @Override
-    public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder) throws FileNotFoundException {
+    public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder)
+            throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         final File parent = getFileForDocId(parentDocumentId);
         File[] children = parent.listFiles();
@@ -172,19 +178,23 @@ public class InternalStorageProvider extends DocumentsProvider {
     }
 
     @Override
-    public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal) throws FileNotFoundException {
+    public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal)
+            throws FileNotFoundException {
         final File file = getFileForDocId(documentId);
         final int accessMode;
         if ("r".equals(mode)) {
             accessMode = ParcelFileDescriptor.MODE_READ_ONLY;
         } else if ("w".equals(mode) || "wt".equals(mode)) {
-            accessMode = ParcelFileDescriptor.MODE_WRITE_ONLY | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE;
+            accessMode = ParcelFileDescriptor.MODE_WRITE_ONLY | ParcelFileDescriptor.MODE_CREATE
+                    | ParcelFileDescriptor.MODE_TRUNCATE;
         } else if ("wa".equals(mode)) {
-            accessMode = ParcelFileDescriptor.MODE_WRITE_ONLY | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_APPEND;
+            accessMode = ParcelFileDescriptor.MODE_WRITE_ONLY | ParcelFileDescriptor.MODE_CREATE
+                    | ParcelFileDescriptor.MODE_APPEND;
         } else if ("rw".equals(mode)) {
             accessMode = ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE;
         } else if ("rwt".equals(mode)) {
-            accessMode = ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE;
+            accessMode = ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE
+                    | ParcelFileDescriptor.MODE_TRUNCATE;
         } else {
             throw new IllegalArgumentException("Invalid mode: " + mode);
         }
@@ -194,21 +204,47 @@ public class InternalStorageProvider extends DocumentsProvider {
     @Override
     public String createDocument(String documentId, String mimeType, String displayName) throws FileNotFoundException {
         File parent = getFileForDocId(documentId);
-        
-        // Sanitize file name to prevent path traversal
-        String safeDisplayName = displayName.replace("/", "").replace("\\", "");
-        File file = new File(parent, safeDisplayName);
-        
-        // Double-check the resulting path stays within root
-        if (!isPathSafe(getRootFile(), file)) {
-            throw new FileNotFoundException("Invalid document display name.");
+
+        if (displayName == null || displayName.trim().isEmpty()) {
+            throw new FileNotFoundException("Display name cannot be empty.");
         }
-        
+
+        // Remediate Path Traversal
+        String safeDisplayName = displayName.replaceAll("[/\\\\:*?\"<>|]", "_").trim();
+        if (safeDisplayName.equals(".") || safeDisplayName.equals("..") || safeDisplayName.isEmpty()) {
+            safeDisplayName = "unnamed_file";
+        }
+
+        File file = new File(parent, safeDisplayName);
+
+        if (file.exists()) {
+            String baseName = safeDisplayName;
+            String extension = "";
+            int dotIndex = safeDisplayName.lastIndexOf('.');
+            if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType) && dotIndex > 0) {
+                baseName = safeDisplayName.substring(0, dotIndex);
+                extension = safeDisplayName.substring(dotIndex);
+            }
+            int count = 1;
+            while (file.exists()) {
+                file = new File(parent, baseName + " (" + count + ")" + extension);
+                count++;
+            }
+        }
+
+        if (!isPathSafe(getRootFile(), file)) {
+            throw new FileNotFoundException("Invalid document destination.");
+        }
+
         try {
             if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
-                file.mkdir();
+                if (!file.mkdirs()) {
+                    throw new IOException("Failed to mkdir: " + file.getAbsolutePath());
+                }
             } else {
-                file.createNewFile();
+                if (!file.createNewFile()) {
+                    throw new IOException("Failed to create file: " + file.getAbsolutePath());
+                }
             }
             return getDocIdForFile(file);
         } catch (Exception e) {
@@ -220,14 +256,13 @@ public class InternalStorageProvider extends DocumentsProvider {
     public void deleteDocument(String documentId) throws FileNotFoundException {
         File file = getFileForDocId(documentId);
         if (!deleteRecursively(file)) {
-            throw new FileNotFoundException("Failed to delete document");
+            throw new FileNotFoundException("Failed to delete document: " + documentId);
         }
     }
 
     private boolean deleteRecursively(File file) {
         if (file.isDirectory()) {
             File[] children = file.listFiles();
-            // Null check prevents NPE when directory cannot be listed
             if (children != null) {
                 for (File child : children) {
                     deleteRecursively(child);
@@ -242,10 +277,7 @@ public class InternalStorageProvider extends DocumentsProvider {
         File file = getFileForDocId(documentId);
         return getTypeForFile(file);
     }
-    
-    /**
-     * Determines MIME type directly from a File object (avoids redundant docId lookup in loops)
-     */
+
     private String getTypeForFile(File file) {
         if (file.isDirectory()) {
             return DocumentsContract.Document.MIME_TYPE_DIR;
@@ -283,7 +315,6 @@ public class InternalStorageProvider extends DocumentsProvider {
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId);
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, file.getName());
         row.add(DocumentsContract.Document.COLUMN_SIZE, file.length());
-        // Use File object directly instead of re-resolving from docId for performance
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, getTypeForFile(file));
         row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.lastModified());
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags);
