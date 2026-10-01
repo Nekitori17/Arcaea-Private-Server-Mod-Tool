@@ -9,32 +9,52 @@ class SmaliPatcher:
     def __init__(self, decoded_dir: Path):
         self.decoded_dir = decoded_dir
 
+    # Replacement bodies used to neutralise the SSL pinning helpers: the goal is
+    # to make them report success without ever touching the connection.
+    #   V -> return immediately (the custom SSLSocketFactory is never installed)
+    #   Z -> return true
+    #   I -> return 1 (success value used by the original pin verifier)
+    _NEUTRAL_BODIES = {
+        "V": "    .locals 0\n    return-void\n",
+        "Z": "    .locals 1\n    const/4 v0, 0x1\n    return v0\n",
+        "I": "    .locals 1\n    const/4 v0, 0x1\n    return v0\n",
+    }
+
     def _replace_method_body(
         self, content: str, method_name: str
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, int, str]:
+        """Neutralises every overload of `method_name`.
+
+        Returns ``(new_content, patched_count, skipped_note)``; ``skipped_note``
+        describes matches that were left untouched on purpose (native/abstract
+        methods, unsupported return types).
+        """
         # Supports both Windows (\r\n) and Unix (\n) line endings
         method_pattern = re.compile(
-            rf"(\.method\s+[^\n]*{re.escape(method_name)}\([^\n]*\)([VZ])\r?\n)"
+            rf"(\.method\s+[^\n]*\b{re.escape(method_name)}\([^\n]*\)([^\s\r\n]+)\r?\n)"
             r"(.*?)"
             r"(\.end method)",
             re.DOTALL,
         )
 
-        match = method_pattern.search(content)
-        if not match:
-            return content, False
+        patched = 0
+        skipped: list[str] = []
 
-        header, return_type, _, footer = match.groups()
-        if return_type == "Z":
-            replacement = (
-                f"{header}    .locals 1\n    const/4 v0, 0x1\n    return v0\n{footer}"
-            )
-        else:
-            replacement = f"{header}    .locals 0\n    return-void\n{footer}"
+        def _replace(match: re.Match) -> str:
+            nonlocal patched
+            header, return_type, _body, footer = match.groups()
+            if re.search(r"\b(?:native|abstract)\b", header):
+                skipped.append("native/abstract method")
+                return match.group(0)
+            replacement_body = self._NEUTRAL_BODIES.get(return_type)
+            if replacement_body is None:
+                skipped.append(f"unsupported return type {return_type!r}")
+                return match.group(0)
+            patched += 1
+            return f"{header}{replacement_body}{footer}"
 
-        # Using direct string replacement to avoid regex escape sequence issues
-        patched_content = content.replace(match.group(0), replacement, 1)
-        return patched_content, True
+        new_content = method_pattern.sub(_replace, content, count=0)
+        return new_content, patched, "; ".join(sorted(set(skipped)))
 
     def patch_ssl_pinning(self) -> None:
         """Bypasses Java-level SSL pinning inside Cocos2dxHttpURLConnection."""
@@ -48,14 +68,18 @@ class SmaliPatcher:
         for path in smali_files:
             content = path.read_text(encoding="utf-8")
             changed = False
+            relative = path.relative_to(self.decoded_dir)
 
             for method_name in target_methods:
-                content, patched = self._replace_method_body(content, method_name)
+                content, patched, note = self._replace_method_body(content, method_name)
                 if patched:
-                    logger.success(
-                        f"Patched Java {method_name} in {path.relative_to(self.decoded_dir)}"
-                    )
+                    logger.success(f"Patched Java {method_name} ({patched} overload(s)) in {relative}")
+                    if note:
+                        logger.warn(f"Left untouched in {method_name}: {note}")
                     changed = True
+                else:
+                    reason = note if note else "method not found"
+                    logger.warn(f"Could not patch {method_name} in {relative}: {reason}")
 
             if changed:
                 path.write_text(content, encoding="utf-8")
