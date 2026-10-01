@@ -90,23 +90,54 @@ class ManifestAndSecurityPatcher:
             return
 
         manifest_text = manifest_file.read_text(encoding="utf-8")
-        
+
         # Find original package name
         match = re.search(r'<manifest[^>]*\s+package="([^"]+)"', manifest_text)
         if not match:
             logger.warn("Could not find package attribute in AndroidManifest.xml")
             return
-            
+
         old_package_name = match.group(1)
         if old_package_name == new_package_name:
             logger.detail(f"Package name is already {new_package_name}")
             return
-            
-        # Replace the package name in the manifest (handles attributes and provider authorities using it)
-        manifest_text = manifest_text.replace(old_package_name, new_package_name)
+
+        # App-owned permissions (e.g. "<pkg>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
+        # must follow the new package too, otherwise installing this APK next to the
+        # original one fails with INSTALL_FAILED_DUPLICATE_PERMISSION.
+        owned_permissions = sorted(
+            {
+                name
+                for name in re.findall(
+                    r'<(?:uses-)?permission(?:-sdk-23)?[^>]*android:name="([^"]+)"',
+                    manifest_text,
+                )
+                if name == old_package_name or name.startswith(old_package_name + ".")
+            }
+        )
+        for permission in owned_permissions:
+            logger.detail(
+                "Renaming permission: "
+                f"{permission} -> {new_package_name}{permission[len(old_package_name):]}"
+            )
+
+        # Rename the package attribute plus every identifier derived from it:
+        # provider authorities, android:permission / android:process and the
+        # permission names collected above. Only whole, dot-bounded occurrences are
+        # replaced, so unrelated strings such as "low.moe.AppActivity" stay intact.
+        manifest_text, renamed_count = re.subn(
+            rf'(?<![A-Za-z0-9_.]){re.escape(old_package_name)}(?=[.": ]|$)',
+            lambda _match: new_package_name,
+            manifest_text,
+        )
+        if renamed_count == 0:
+            logger.warn("No package references were renamed (unexpected).")
+        else:
+            logger.detail(f"Renamed {renamed_count} package reference(s), permissions included")
+
         manifest_file.write_text(manifest_text, encoding="utf-8")
         logger.success(f"Changed package name from {old_package_name} to {new_package_name} in AndroidManifest.xml")
-        
+
         # Also update apktool.yml so Apktool builds the APK correctly
         apktool_yml = self.decoded_dir / "apktool.yml"
         if apktool_yml.exists():
