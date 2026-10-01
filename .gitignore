@@ -371,4 +371,4 @@ google-services.json
 
 config.yml
 
-!arcaea_patcher/templates/*
+!arcaea_patcher/templates/**/*
