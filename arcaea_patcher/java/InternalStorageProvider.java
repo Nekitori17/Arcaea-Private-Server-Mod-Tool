@@ -7,6 +7,7 @@ import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
+import android.util.Log;
 import android.webkit.MimeTypeMap;
 
 import java.io.File;
@@ -15,6 +16,7 @@ import java.io.IOException;
 
 public class InternalStorageProvider extends DocumentsProvider {
 
+    private static final String TAG = "InternalStorage";
     private static final String DEFAULT_ROOT_ID = "root";
     private static final String[] DEFAULT_ROOT_PROJECTION = new String[] {
             DocumentsContract.Root.COLUMN_ROOT_ID,
@@ -167,10 +169,18 @@ public class InternalStorageProvider extends DocumentsProvider {
     public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder)
             throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
+        final File root = getRootFile();
         final File parent = getFileForDocId(parentDocumentId);
         File[] children = parent.listFiles();
         if (children != null) {
             for (File file : children) {
+                // Skip entries resolving outside the app data dir (e.g. the
+                // "lib" symlink into /data/app): their docIds cannot be mapped
+                // back to a safe path and would fail when opened.
+                if (!isPathSafe(root, file)) {
+                    Log.d(TAG, "Skipping out-of-root entry: " + file.getAbsolutePath());
+                    continue;
+                }
                 includeFile(result, null, file);
             }
         }
@@ -181,6 +191,9 @@ public class InternalStorageProvider extends DocumentsProvider {
     public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal)
             throws FileNotFoundException {
         final File file = getFileForDocId(documentId);
+        if (file.isDirectory()) {
+            throw new FileNotFoundException("Cannot open a directory: " + documentId);
+        }
         final int accessMode;
         if ("r".equals(mode)) {
             accessMode = ParcelFileDescriptor.MODE_READ_ONLY;
@@ -265,7 +278,9 @@ public class InternalStorageProvider extends DocumentsProvider {
             File[] children = file.listFiles();
             if (children != null) {
                 for (File child : children) {
-                    deleteRecursively(child);
+                    if (!deleteRecursively(child)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -307,9 +322,11 @@ public class InternalStorageProvider extends DocumentsProvider {
         int flags = 0;
         if (file.isDirectory()) {
             flags |= DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE;
+            flags |= DocumentsContract.Document.FLAG_SUPPORTS_DELETE;
+        } else {
+            flags |= DocumentsContract.Document.FLAG_SUPPORTS_WRITE;
+            flags |= DocumentsContract.Document.FLAG_SUPPORTS_DELETE;
         }
-        flags |= DocumentsContract.Document.FLAG_SUPPORTS_WRITE;
-        flags |= DocumentsContract.Document.FLAG_SUPPORTS_DELETE;
 
         final MatrixCursor.RowBuilder row = result.newRow();
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId);
