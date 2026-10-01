@@ -1,6 +1,9 @@
 import datetime
 import ipaddress
 from pathlib import Path
+from typing import Optional
+
+import yaml
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
@@ -8,12 +11,44 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
 
+def load_server_ips_from_config(
+    config_path: str = "config.yml",
+) -> list[str]:
+    """Read api_host and auth_host from config.yml, return list of unique IPs/hosts."""
+    path = Path(config_path)
+    if not path.exists():
+        print(f"[!] Config file '{config_path}' not found, using defaults.")
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw_cfg = yaml.safe_load(f) or {}
+
+    server_data = raw_cfg.get("server") or {}
+    hosts: list[str] = []
+    for key in ("api_host", "auth_host"):
+        host = server_data.get(key)
+        if host and host not in hosts:
+            hosts.append(host)
+
+    return hosts
+
+
 def generate_ssl_certificate(
     cert_path: str = "server.pem",
     key_path: str = "server.key",
-    server_ip: str = "192.168.1.150",
+    server_ip: Optional[str] = None,
+    config_path: str = "config.yml",
     days_valid: int = 3650,  # 10 years
 ):
+    # Read IP from config.yml
+    config_hosts = load_server_ips_from_config(config_path)
+
+    if config_hosts:
+        print(f"[*] Loaded hosts from {config_path}: {', '.join(config_hosts)}")
+
+    # Primary IP for Common Name (priority: parameter > config > default)
+    primary_ip = server_ip or (config_hosts[0] if config_hosts else "127.0.0.1")
+
     print("[*] Generating 2048-bit RSA Private Key...")
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -24,7 +59,7 @@ def generate_ssl_certificate(
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME, "VN"),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Nekitori17 Arcaea Server"),
-        x509.NameAttribute(NameOID.COMMON_NAME, server_ip),
+        x509.NameAttribute(NameOID.COMMON_NAME, primary_ip),
     ])
 
     # Domain and IP list for Subject Alternative Names (SAN)
@@ -37,13 +72,14 @@ def generate_ssl_certificate(
         "arcaea.lowiro.com",
     ]
 
-    ips = [
-        "127.0.0.1",
-        server_ip,
-    ]
+    # Combine IPs: 127.0.0.1 + primary_ip + all hosts from config (remove duplicates)
+    ips: list[str] = ["127.0.0.1"]
+    for ip in [primary_ip] + config_hosts:
+        if ip not in ips:
+            ips.append(ip)
 
-    # Build SAN entries
-    alt_names = []
+    # Build SAN entries — use list[x509.GeneralName] for both DNSName and IPAddress
+    alt_names: list[x509.GeneralName] = []
     for d in domains:
         alt_names.append(x509.DNSName(d))
     for ip_str in ips:
@@ -96,5 +132,4 @@ def generate_ssl_certificate(
 
 
 if __name__ == "__main__":
-    # Thay đổi IP này nếu IP máy tính của bạn đổi sang số khác
-    generate_ssl_certificate(server_ip="192.168.1.150")
+    generate_ssl_certificate()
