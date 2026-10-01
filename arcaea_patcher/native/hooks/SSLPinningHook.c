@@ -2,7 +2,7 @@
 
 #include <stddef.h>
 
-#include "MemoryUtils.h"
+#include "HookEngine.h"
 
 #define LOG_MODULE_TAG "SSL"
 #include "Logger.h"
@@ -60,11 +60,13 @@ static void hook_CTX_cert_verify_cb(void *ctx, void *cb, void *arg) {
     orig_CTX_cert_verify_cb(ctx, NULL, NULL);
 }
 
-static void hook_set1_host(void *ssl, const char *host) {
+static int hook_set1_host(void *ssl, const char *host) {
+  /* BoringSSL: int SSL_set1_host(SSL *ssl, const char *hostname) */
   LOGI("SSL_set1_host(%s) -> cleared (allow Reqable MITM)",
        host ? host : "(null)");
-  /* Intentionally do NOT forward the expected hostname. */
+  /* Intentionally do NOT forward the expected hostname; report success. */
   (void)ssl;
+  return 1;
 }
 
 static int hook_X509_check_host(void *cert, const char *host, size_t len,

@@ -5,14 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+#include "FileUtils.h"
 
 #define LOG_MODULE_TAG "Domain"
 #include "Logger.h"
 
 static DomainRule s_rules[DOMAIN_MAX_RULES];
 static size_t s_count = 0;
-static char s_cfg_path[512] = {0};
 
 static char *trim(char *s) {
   char *end;
@@ -74,6 +74,33 @@ static void split_host_port(char *in, char *host, size_t host_sz, int *port) {
   host[host_sz - 1] = '\0';
 }
 
+/* Case-insensitive hostname comparison; one trailing '.' on either side is
+ * ignored ("Example.COM." == "example.com"). */
+static int host_equals(const char *a, const char *b) {
+  size_t la, lb, i;
+  if (!a || !b)
+    return 0;
+  la = strlen(a);
+  lb = strlen(b);
+  while (la > 0 && a[la - 1] == '.')
+    la--;
+  while (lb > 0 && b[lb - 1] == '.')
+    lb--;
+  if (la != lb)
+    return 0;
+  for (i = 0; i < la; i++) {
+    char ca = a[i];
+    char cb = b[i];
+    if (ca >= 'A' && ca <= 'Z')
+      ca = (char)(ca + ('a' - 'A'));
+    if (cb >= 'A' && cb <= 'Z')
+      cb = (char)(cb + ('a' - 'A'));
+    if (ca != cb)
+      return 0;
+  }
+  return 1;
+}
+
 int domain_load(const char *config_path) {
   FILE *fp;
   char line[512];
@@ -82,10 +109,9 @@ int domain_load(const char *config_path) {
     LOGW("Empty domain config path");
     return 0;
   }
-  fp = fopen(config_path, "r");
+  fp = file_open_domain_config(config_path);
   if (!fp) {
-    LOGW("No domain.cfg at %s (errno=%d); routing disabled", config_path,
-         errno);
+    LOGW("No domain.cfg at %s (errno=%d); routing disabled", config_path, errno);
     return 0;
   }
   while (fgets(line, sizeof(line), fp) && s_count < DOMAIN_MAX_RULES) {
@@ -124,51 +150,31 @@ int domain_load(const char *config_path) {
 }
 
 const DomainRule *domain_find(const char *hostname) {
+  const DomainRule *rule;
   size_t i;
   if (!hostname)
     return NULL;
   for (i = 0; i < s_count; i++) {
-    if (strcmp(s_rules[i].original, hostname) == 0)
-      return &s_rules[i];
+    rule = &s_rules[i];
+    if (host_equals(rule->original, hostname))
+      return rule;
   }
   return NULL;
+}
+
+size_t domain_find_index(const char *hostname) {
+  size_t i;
+  if (!hostname)
+    return DOMAIN_NOT_FOUND;
+  for (i = 0; i < s_count; i++) {
+    if (host_equals(s_rules[i].original, hostname))
+      return i;
+  }
+  return DOMAIN_NOT_FOUND;
 }
 
 size_t domain_count(void) { return s_count; }
 
 const DomainRule *domain_get(size_t index) {
   return (index < s_count) ? &s_rules[index] : NULL;
-}
-
-const char *domain_resolve_config_path(void) {
-  static const char *pkgs[] = {"moe.neki.arc", "moe.low.arc", NULL};
-  char cmdline[256] = {0};
-  FILE *fp;
-  int i;
-  if (s_cfg_path[0])
-    return s_cfg_path;
-  fp = fopen("/proc/self/cmdline", "r");
-  if (fp) {
-    size_t n = fread(cmdline, 1, sizeof(cmdline) - 1, fp);
-    fclose(fp);
-    if (n > 0) {
-      cmdline[n] = '\0';
-      snprintf(s_cfg_path, sizeof(s_cfg_path),
-               "/data/user/0/%s/files/domain.cfg", cmdline);
-      if (access(s_cfg_path, R_OK) == 0)
-        return s_cfg_path;
-      snprintf(s_cfg_path, sizeof(s_cfg_path), "/data/data/%s/files/domain.cfg",
-               cmdline);
-      return s_cfg_path;
-    }
-  }
-  for (i = 0; pkgs[i]; i++) {
-    snprintf(s_cfg_path, sizeof(s_cfg_path), "/data/user/0/%s/files/domain.cfg",
-             pkgs[i]);
-    if (access(s_cfg_path, R_OK) == 0)
-      return s_cfg_path;
-  }
-  snprintf(s_cfg_path, sizeof(s_cfg_path),
-           "/data/user/0/moe.neki.arc/files/domain.cfg");
-  return s_cfg_path;
 }

@@ -18,16 +18,6 @@ size_t mem_get_module_size(const char *module_name);
  */
 int mem_make_writable(void *addr, size_t size);
 
-/*
- * Overwrites the GOT/PLT slot for `symbol_name` inside `module_base`.
- * On success stores the previous value into *orig_func (if non-NULL and
- * *orig_func is NULL) and returns 0. Returns -1 when the symbol is not
- * found in the PLT relocation tables (common for statically linked OpenSSL).
- */
-int plt_hook_symbol(void *module_base, const char *symbol_name,
-                    void *hook_func, void **orig_func);
-
 #ifdef __cplusplus
 }
 #endif
-
