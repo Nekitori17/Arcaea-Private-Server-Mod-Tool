@@ -17,7 +17,7 @@ public class NekiLoader {
 
     /**
      * Initializes the domain routing and SSL bypass subsystem.
-     * 
+     *
      * @param context Application or Activity context
      */
     public static synchronized void init(Context context) {
@@ -40,28 +40,48 @@ public class NekiLoader {
 
             File targetConfig = new File(filesDir, CONFIG_FILENAME);
 
-            // 2. Extract/update domain.cfg from APK assets to internal storage
-            try (InputStream in = context.getAssets().open(CONFIG_FILENAME)) {
-                try (OutputStream out = new FileOutputStream(targetConfig)) {
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-                    while ((bytesRead = in.read(buffer)) != -1) {
-                        out.write(buffer, 0, bytesRead);
+            // 2. Extract domain.cfg from APK assets only when it is missing,
+            //    so runtime edits made in internal storage are preserved.
+            //    Delete the file to restore the APK default.
+            if (targetConfig.exists() && targetConfig.length() > 0) {
+                Log.i(TAG, "Keeping existing domain.cfg: " + targetConfig.getAbsolutePath());
+            } else {
+                try (InputStream in = context.getAssets().open(CONFIG_FILENAME)) {
+                    try (OutputStream out = new FileOutputStream(targetConfig)) {
+                        byte[] buffer = new byte[4096];
+                        int bytesRead;
+                        while ((bytesRead = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, bytesRead);
+                        }
+                        out.flush();
                     }
-                    out.flush();
+                    Log.i(TAG, "Extracted domain.cfg to: " + targetConfig.getAbsolutePath());
+                } catch (Exception e) {
+                    Log.w(TAG, "No domain.cfg in assets or failed to extract. " +
+                            "Proceeding with existing config: " + e.getMessage());
                 }
-                Log.i(TAG, "Extracted domain.cfg to: " + targetConfig.getAbsolutePath());
-            } catch (Exception e) {
-                Log.w(TAG, "No domain.cfg in assets or failed to extract. Proceeding with existing config: " + e.getMessage());
             }
 
             // 3. Load the native hook library
-            System.loadLibrary("neki");
-            Log.i(TAG, "libneki.so loaded successfully");
+            try {
+                System.loadLibrary("neki");
+                Log.i(TAG, "libneki.so loaded successfully");
+            } catch (Throwable t) {
+                Log.e(TAG, "Failed to load libneki.so - domain routing and SSL " +
+                        "bypass hooks will NOT be installed", t);
+                return;
+            }
 
-            nativeInit();
+            // 4. Install the native hooks
+            try {
+                nativeInit();
+            } catch (Throwable t) {
+                Log.e(TAG, "nativeInit() failed - hooks may be partially " +
+                        "installed or missing", t);
+                return;
+            }
+
             sInitialized = true;
-
             Log.i(TAG, "NekiHook initialization completed successfully");
 
         } catch (Throwable t) {
