@@ -70,3 +70,6 @@ Thumbs.db
 desktop.ini
 
 config.yml
+
+# Exclude generated template files from commit
+!arcaea_patcher/templates/*
