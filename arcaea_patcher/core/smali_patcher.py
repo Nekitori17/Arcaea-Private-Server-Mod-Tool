@@ -68,7 +68,7 @@ class SmaliPatcher:
             "**/Cocos2dxActivity.smali",
         ]
 
-        hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/neki/arc/NekiHookLoader;->init(Landroid/content/Context;)V\n"
+        hook_call = "    invoke-static/range {p0 .. p0}, Lmoe/neki/arc/NekiLoader;->init(Landroid/content/Context;)V\n"
 
         for pattern in candidate_patterns:
             files = list(self.decoded_dir.glob(pattern))
@@ -76,8 +76,8 @@ class SmaliPatcher:
                 content = path.read_text(encoding="utf-8")
 
                 # Check if hook is already injected
-                if "Lmoe/neki/arc/NekiHookLoader;->init" in content:
-                    logger.detail(f"NekiHookLoader already present in {path.name}")
+                if "Lmoe/neki/arc/NekiLoader;->init" in content:
+                    logger.detail(f"NekiLoader already present in {path.name}")
                     return True
 
                 # Locate the onCreate method block
@@ -112,10 +112,10 @@ class SmaliPatcher:
                 content = content.replace(method_match.group(0), new_method, 1)
 
                 path.write_text(content, encoding="utf-8")
-                logger.success(f"Injected NekiHookLoader into {path.relative_to(self.decoded_dir)}")
+                logger.success(f"Injected NekiLoader into {path.relative_to(self.decoded_dir)}")
                 
                 # Stop after injecting into the primary entry activity
                 return True
 
-        logger.warn("No suitable Activity found to inject NekiHookLoader!")
+        logger.warn("No suitable Activity found to inject NekiLoader!")
         return False
