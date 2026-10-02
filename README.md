@@ -4,7 +4,7 @@ A modular, lightweight, and automated Python tool designed to unpack, patch, reb
 
 This tool focuses on:
 
-- **Native & Java SSL Verification Bypass**: Neutralises native OpenSSL/BoringSSL routines (`SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_CTX_set_custom_verify`, `X509_verify_cert`, `SSL_get_verify_result`) with an ARM32/ARM64 (Thumb-aware, idempotent) binary patcher, installs runtime PLT hooks via `libneki.so`, and patches the Java `Cocos2dxHttpURLConnection` helpers (`setVerifySSL`, `verifySSLPins`).
+- **Native & Java SSL Verification Bypass**: Neutralises native OpenSSL/BoringSSL routines (`SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_CTX_set_custom_verify`, `SSL_CTX_set_cert_verify_callback`, `SSL_set1_host`, `X509_verify_cert`, `SSL_get_verify_result`) with an ARM32/ARM64 (Thumb-aware, idempotent) binary patcher, installs runtime PLT hooks via `libneki.so`, and patches the Java `Cocos2dxHttpURLConnection` helpers (`setVerifySSL`, `verifySSLPins`). `SSL_CTX_set_cert_verify_callback` is patched because Arcaea registers its own certificate-pinning callback through it; without the patch the client completes the TLS handshake but tears it down before sending any HTTP request, which shows up as "Could not connect to online server".
 - **Dynamic Native Hook Domain Redirection (`libneki.so`)**: PLT-hooks `getaddrinfo` / `connect` / `gethostbyname` inside `libcocos2dcpp.so` and redirects name lookups and connections at runtime without domain length limits.
 - **Storage Access Framework Integration**: Exposes internal app data directory (`/data/data/<pkg>`) for file managers without root.
 - **Automated Build & Signing Pipeline**: Auto-discovers Android SDK build-tools, handles alignment with `zipalign`, and signs with `apksigner`.
@@ -255,3 +255,4 @@ options:
 - **`ndk-build` not found**: install an NDK through the SDK Manager or set `ANDROID_NDK_HOME`.
 - **`baksmali CLI not found`**: install the SDK command line tools (`cmdline-tools`) or drop the baksmali `*.jar` files into `lib/`.
 - **`Templates directory not found` / `No template files merged`**: run `python complie.py` before patching.
+- **Game logs `Rule[...] -> <ip>` but still shows "Could not connect"**: make sure the `domain.cfg` on device has no stray bytes — the patcher now sanitises control characters/quotes when generating it, and `NekiLoader` re-extracts it from the APK assets if it is malformed. Delete `/data/user/0/<pkg>/files/domain.cfg` to force a refresh.

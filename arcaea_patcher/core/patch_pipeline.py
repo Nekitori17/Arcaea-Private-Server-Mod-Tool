@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Optional
+import ipaddress
+import re
 import shutil
 import tempfile
 from arcaea_patcher.config import PatchConfig
@@ -8,6 +10,37 @@ from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
 from arcaea_patcher.core.manifest_patcher import ManifestAndSecurityPatcher
 from arcaea_patcher.core.smali_patcher import SmaliPatcher
 from arcaea_patcher.utils.logger import logger
+
+
+_CONTROL_OR_QUOTE_RE = re.compile(r'[\x00-\x1f\x7f"]')
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _sanitize_host(value: Optional[str]) -> Optional[str]:
+    """Strips control bytes/quotes that would make inet_pton() fail on device."""
+    if value is None:
+        return None
+    cleaned = _CONTROL_OR_QUOTE_RE.sub("", value).strip()
+    if cleaned != value:
+        logger.warn(f"Sanitised host value {value!r} -> {cleaned!r}")
+    return cleaned
+
+
+def _is_plausible_host(value: Optional[str]) -> bool:
+    """Best-effort check that `value` is a hostname, IP or host:port pair."""
+    if not value:
+        return False
+    host = value
+    if ":" in value and not value.startswith("["):
+        host = value.rsplit(":", 1)[0]
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return bool(_HOSTNAME_RE.match(host))
 
 
 class PatchPipeline:
@@ -99,21 +132,33 @@ class PatchPipeline:
                     API_DOMAINS = ["arcapi-v4.lowiro.com", "arcapi-v3.lowiro.com", "arcaea.lowiro.com"]
                     AUTH_DOMAINS = ["auth-v2.lowiro.com", "auth.lowiro.com"]
 
+                api_host = _sanitize_host(self.config.server.api_host)
+                auth_host = _sanitize_host(self.config.server.auth_host)
+                if api_host and not _is_plausible_host(api_host):
+                    logger.warn(f"api_host '{api_host}' does not look like a valid host/IP; redirect may fail")
+                if auth_host and not _is_plausible_host(auth_host):
+                    logger.warn(f"auth_host '{auth_host}' does not look like a valid host/IP; redirect may fail")
+
                 domain_lines = []
-                if self.config.server.api_host:
+                if api_host:
                     for d in API_DOMAINS:
-                        domain_lines.append(f"{d}={self.config.server.api_host}")
-                if self.config.server.auth_host:
+                        domain_lines.append(f"{d}={api_host}")
+                if auth_host:
                     for d in AUTH_DOMAINS:
-                        domain_lines.append(f"{d}={self.config.server.auth_host}")
+                        domain_lines.append(f"{d}={auth_host}")
                 if getattr(server_cfg, 'custom_mappings', None):
                     for orig, target in server_cfg.custom_mappings.items():
-                        domain_lines.append(f"{orig}={target}")
+                        domain_lines.append(
+                            f"{_sanitize_host(orig)}={_sanitize_host(target)}"
+                        )
 
-                # 1. Write domain.cfg to assets/
+                # 1. Write domain.cfg to assets/ (force LF so the on-device parser
+                #    never sees Windows CRLF line endings).
                 assets_dir = decoded_dir / "assets"
                 assets_dir.mkdir(parents=True, exist_ok=True)
-                (assets_dir / "domain.cfg").write_text("\n".join(domain_lines) + "\n", encoding="utf-8")
+                cfg_path = assets_dir / "domain.cfg"
+                with open(cfg_path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write("\n".join(domain_lines) + "\n")
                 logger.detail(f"Created assets/domain.cfg with {len(domain_lines)} mapping(s)")
 
                 # 2. Inject the native hook trigger into the Activity smali

@@ -268,6 +268,22 @@ class NativeLibraryPatcher:
             applied += self._apply_patches(
                 data, parser, ["X509_verify_cert"], arm_true, thumb_true, "return 1"
             )
+            # The client registers a custom certificate callback via
+            # SSL_CTX_set_cert_verify_callback, which rejects the private-server cert.
+            # Neutralise the registration so OpenSSL uses the already-bypassed default verification.
+            applied += self._apply_patches(
+                data,
+                parser,
+                ["SSL_CTX_set_cert_verify_callback"],
+                arm_void,
+                thumb_void,
+                "void",
+            )
+            # SSL_set1_host() sets the expected peer hostname for verification; report
+            # success instead of installing the check.
+            applied += self._apply_patches(
+                data, parser, ["SSL_set1_host"], arm_true, thumb_true, "return 1"
+            )
             applied += self._apply_patches(
                 data,
                 parser,

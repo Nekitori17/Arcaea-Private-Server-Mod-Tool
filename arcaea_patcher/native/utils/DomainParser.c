@@ -28,6 +28,26 @@ static char *trim(char *s) {
   return s;
 }
 
+// Hand-edited configs may contain control bytes or pasted quotes around an IP.
+// Remove all control bytes (< 0x20) and double quotes so inet_pton() parses it
+// correctly.
+static int strip_host_junk(char *s) {
+  char *dst;
+  int removed = 0;
+  if (!s)
+    return 0;
+  for (dst = s; *s; s++) {
+    unsigned char c = (unsigned char)*s;
+    if (c < 0x20 || c == '"') {
+      removed++;
+      continue;
+    }
+    *dst++ = *s;
+  }
+  *dst = '\0';
+  return removed;
+}
+
 /* Split "host[:port]" -> host + port (0 = none/any).
  * Bare IPv6 ("::1") is NOT split; only "[v6]:port" carries a port. */
 static void split_host_port(char *in, char *host, size_t host_sz, int *port) {
@@ -127,6 +147,10 @@ int domain_load(const char *config_path) {
     *delim = '\0';
     left = trim(line);
     right = trim(delim + 1);
+    if (strip_host_junk(left) + strip_host_junk(right) > 0)
+      LOGW("Rule line carried control/quote bytes; sanitised before parsing");
+    left = trim(left);
+    right = trim(right);
     if (!left[0] || !right[0])
       continue;
     r = &s_rules[s_count];
