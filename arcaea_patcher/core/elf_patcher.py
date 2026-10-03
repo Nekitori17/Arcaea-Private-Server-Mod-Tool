@@ -292,6 +292,9 @@ class NativeLibraryPatcher:
                 thumb_zero,
                 "return 0 / X509_V_OK",
             )
+            applied += self._apply_patches(
+                data, parser, ["X509_check_host"], arm_true, thumb_true, "return 1"
+            )
 
             if applied == 0:
                 logger.warn(f"[{abi}] No SSL symbols patched; file left untouched")
