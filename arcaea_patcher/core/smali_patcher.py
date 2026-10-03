@@ -9,9 +9,8 @@ class SmaliPatcher:
     def __init__(self, decoded_dir: Path):
         self.decoded_dir = decoded_dir
 
-    # Replacement bodies used to neutralise the SSL pinning helpers: the goal is
-    # to make them report success without ever touching the connection.
-    #   V -> return immediately (the custom SSLSocketFactory is never installed)
+    # Simple neutral bodies for methods other than setVerifySSL:
+    #   V -> return immediately
     #   Z -> return true
     #   I -> return 1 (success value used by the original pin verifier)
     _NEUTRAL_BODIES = {
