@@ -1,40 +1,38 @@
 #include <jni.h>
 #include <stddef.h>
 
-#include "core/HookEngine.h"
-#include "hooks/DomainRedirectHook.h"
-#include "hooks/SSLPinningHook.h"
-#include "utils/DomainParser.h"
-#include "utils/FileUtils.h"
+#include "ConfigResolver.h"
+#include "DomainConfig.h"
+#include "DomainRedirectHook.h"
+#include "HookManager.h"
+#include "SslPinningHook.h"
 
 #define LOG_MODULE_TAG "Main"
-#include "utils/Logger.h"
+#include "Logger.h"
 
 #define TARGET_LIB "libcocos2dcpp.so"
-
-/* Runs once, on the thread that first sees TARGET_LIB loaded. */
-static void install_hooks_into(void *module_base) {
-  domain_redirect_install(module_base);
-  ssl_pinning_install(module_base);
-}
+#define CONFIG_FILE "domain.cfg"
 
 JNIEXPORT void JNICALL Java_moe_neki_arc_NekiLoader_nativeInit(JNIEnv *env,
                                                                jclass clazz) {
-  const char *cfg;
-  int rc;
+  char cfg_path[CONFIG_MAX_PATH] = {0};
+  int found;
   (void)env;
   (void)clazz;
-  LOGI("nativeInit (NekiLoader) -> loading domain.cfg + installing hooks");
-  cfg = file_resolve_domain_config_path();
-  LOGI("Using domain config: %s", cfg ? cfg : "(null)");
-  domain_load(cfg);
-  if (domain_count() == 0)
-    LOGW("No redirect rules; running as SSL-bypass-only");
-  rc = hook_engine_install_when_loaded(TARGET_LIB, install_hooks_into);
-  if (rc == 0)
-    LOGW("Hooks deferred until %s is loaded", TARGET_LIB);
-  else if (rc < 0)
-    LOGE("Hook engine could not start");
+
+  LOGI("nativeInit (NekiLoader) -> resolving config and registering hooks");
+
+  found = config_resolver_resolve_path(CONFIG_FILE, cfg_path, sizeof(cfg_path));
+  LOGI("Domain config: %s (exists=%d)", cfg_path, found);
+
+  domain_config_load_file(cfg_path);
+  if (domain_config_count() == 0)
+    LOGW("No redirect rules loaded; running as SSL-bypass-only");
+
+  hook_manager_register(domain_redirect_get_module());
+  hook_manager_register(ssl_pinning_get_module());
+
+  hook_manager_init(TARGET_LIB);
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {

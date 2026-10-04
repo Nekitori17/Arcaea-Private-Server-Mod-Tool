@@ -10,7 +10,7 @@
 #define LOG_MODULE_TAG "Memory"
 #include "Logger.h"
 
-/* Strict match: "libfoo.so" must not match "libfoobar.so". */
+/* Matches exact module name in /proc/self/maps path to prevent substring false positives. */
 static int line_matches_module(const char *line, const char *module_name) {
   size_t name_len;
   const char *p;
@@ -23,18 +23,10 @@ static int line_matches_module(const char *line, const char *module_name) {
     const char *after = p + name_len;
     int right_ok = (*after == '\0' || *after == ' ' || *after == '\t' ||
                     *after == '\n' || *after == '-' || *after == ':');
-    if (left_ok && right_ok) {
-      if (*after == '\0' || *after == ' ' || *after == '\t' ||
-          *after == '\n')
-        return 1;
-      /* Accept "libfoo.so" + end/space, reject "libfoobar.so". */
-      if (*after == '-' || *after == ':')
-        return 1;
-    }
-    /* Extra guard for ".so" boundary: allow "X.so" but not "X.soY". */
+    if (left_ok && right_ok)
+      return 1;
     if (left_ok && *after == '.' && strncmp(after, ".so", 3) == 0 &&
-        (after[3] == '\0' || after[3] == ' ' || after[3] == '\t' ||
-         after[3] == '\n'))
+        (after[3] == '\0' || after[3] == ' ' || after[3] == '\t' || after[3] == '\n'))
       return 1;
     p = strstr(p + 1, module_name);
   }
@@ -68,7 +60,7 @@ void *mem_get_module_base(const char *module_name) {
   if (base)
     LOGI("Module %s base=%p", module_name, base);
   else
-    LOGW("Module %s not found in maps (yet)", module_name);
+    LOGW("Module %s not found in maps", module_name);
   return base;
 }
 
@@ -112,8 +104,7 @@ int mem_make_writable(void *addr, size_t size) {
           (size_t)page_size;
   ret = mprotect((void *)page_start, total, PROT_READ | PROT_WRITE);
   if (ret != 0) {
-    ret =
-        mprotect((void *)page_start, total, PROT_READ | PROT_WRITE | PROT_EXEC);
+    ret = mprotect((void *)page_start, total, PROT_READ | PROT_WRITE | PROT_EXEC);
     if (ret != 0)
       LOGE("mprotect failed %p size=%zu errno=%d", addr, size, errno);
   }

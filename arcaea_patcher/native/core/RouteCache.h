@@ -8,25 +8,20 @@
 extern "C" {
 #endif
 
-/* Resolver used to learn the *original* addresses of a rule (normally the
- * saved libc getaddrinfo pointer from the redirect hook). */
 typedef int (*route_resolver_fn)(const char *, const char *,
                                  const struct addrinfo *,
                                  struct addrinfo **);
 
-/* Registers the resolver used by route_cache_snapshot(); set it before the
- * hooks can fire. Passing NULL disables snapshotting. */
+/* Sets libc getaddrinfo function pointer for DNS baseline queries. */
 void route_cache_set_resolver(route_resolver_fn resolver);
 
-/* Resolves the original hostname of `rule_idx` once and remembers its
- * addresses (no-op on later calls / without a resolver). Thread-safe. */
+/* Queries and caches real DNS addresses for the rule at rule_idx. */
 void route_cache_snapshot(size_t rule_idx);
 
-/* Warms the cache for every configured rule on a detached thread. */
+/* Warms the route cache for all loaded rules in a detached thread. */
 void route_cache_snapshot_all_async(void);
 
-/* 1 when `ip` is one of the original addresses previously learned for the
- * given rule index. */
+/* Checks if ip matches an original resolved address for rule_idx. */
 int route_cache_is_original_v4(size_t rule_idx, const struct in_addr *ip);
 int route_cache_is_original_v6(size_t rule_idx, const struct in6_addr *ip);
 

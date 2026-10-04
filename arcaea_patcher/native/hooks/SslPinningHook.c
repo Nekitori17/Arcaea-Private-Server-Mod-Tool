@@ -1,4 +1,4 @@
-#include "SSLPinningHook.h"
+#include "SslPinningHook.h"
 
 #include <stddef.h>
 
@@ -13,9 +13,8 @@ static void (*orig_CTX_custom_verify)(void *, int, void *) = NULL;
 static int (*orig_X509_verify)(void *) = NULL;
 static long (*orig_get_verify_result)(const void *) = NULL;
 static void (*orig_CTX_cert_verify_cb)(void *, void *, void *) = NULL;
-static void (*orig_set1_host)(void *, const char *) = NULL;
-static int (*orig_X509_check_host)(void *, const char *, size_t, unsigned,
-                                   void **) = NULL;
+static int (*orig_set1_host)(void *, const char *) = NULL;
+static int (*orig_X509_check_host)(void *, const char *, size_t, unsigned, void **) = NULL;
 
 static void hook_CTX_set_verify(void *ctx, int mode, void *cb) {
   (void)mode;
@@ -49,7 +48,7 @@ static int hook_X509_verify(void *ctx) {
 
 static long hook_get_verify_result(const void *ssl) {
   (void)ssl;
-  return 0; /* X509_V_OK: keep quiet to avoid log spam per request */
+  return 0; /* X509_V_OK */
 }
 
 static void hook_CTX_cert_verify_cb(void *ctx, void *cb, void *arg) {
@@ -61,10 +60,7 @@ static void hook_CTX_cert_verify_cb(void *ctx, void *cb, void *arg) {
 }
 
 static int hook_set1_host(void *ssl, const char *host) {
-  /* BoringSSL: int SSL_set1_host(SSL *ssl, const char *hostname) */
-  LOGI("SSL_set1_host(%s) -> cleared (allow Reqable MITM)",
-       host ? host : "(null)");
-  /* Intentionally do NOT forward the expected hostname; report success. */
+  LOGI("SSL_set1_host(%s) -> cleared for MITM", host ? host : "(null)");
   (void)ssl;
   return 1;
 }
@@ -85,28 +81,36 @@ void ssl_pinning_install(void *module_base) {
   if (!module_base)
     return;
   LOGI("Installing SSL-pinning bypass hooks...");
-#define TRY(sym, hook, orig)                                                   \
+
+#define TRY_HOOK(sym, hook, orig)                                              \
   do {                                                                         \
     total++;                                                                   \
-    if (plt_hook_symbol(module_base, sym, (void *)(hook), (void **)(orig)) ==  \
-        0)                                                                     \
+    if (plt_hook_symbol(module_base, sym, (void *)(hook), (void **)(orig)) == 0) \
       ok++;                                                                    \
     else                                                                       \
-      LOGW(sym " not in PLT (static-linked? covered by elf_patcher)");         \
+      LOGW(sym " not in PLT (static-linked? handled by elf_patcher)");          \
   } while (0)
-  TRY("SSL_CTX_set_verify", hook_CTX_set_verify, &orig_CTX_set_verify);
-  TRY("SSL_set_verify", hook_set_verify, &orig_set_verify);
-  TRY("SSL_CTX_set_custom_verify", hook_CTX_custom_verify,
-      &orig_CTX_custom_verify);
-  TRY("X509_verify_cert", hook_X509_verify, &orig_X509_verify);
-  TRY("SSL_get_verify_result", hook_get_verify_result, &orig_get_verify_result);
-  TRY("SSL_CTX_set_cert_verify_callback", hook_CTX_cert_verify_cb,
-      &orig_CTX_cert_verify_cb);
-  TRY("SSL_set1_host", hook_set1_host, &orig_set1_host);
-  TRY("X509_check_host", hook_X509_check_host, &orig_X509_check_host);
-#undef TRY
+
+  TRY_HOOK("SSL_CTX_set_verify", hook_CTX_set_verify, &orig_CTX_set_verify);
+  TRY_HOOK("SSL_set_verify", hook_set_verify, &orig_set_verify);
+  TRY_HOOK("SSL_CTX_set_custom_verify", hook_CTX_custom_verify, &orig_CTX_custom_verify);
+  TRY_HOOK("X509_verify_cert", hook_X509_verify, &orig_X509_verify);
+  TRY_HOOK("SSL_get_verify_result", hook_get_verify_result, &orig_get_verify_result);
+  TRY_HOOK("SSL_CTX_set_cert_verify_callback", hook_CTX_cert_verify_cb, &orig_CTX_cert_verify_cb);
+  TRY_HOOK("SSL_set1_host", hook_set1_host, &orig_set1_host);
+  TRY_HOOK("X509_check_host", hook_X509_check_host, &orig_X509_check_host);
+#undef TRY_HOOK
+
   LOGI("SSL hooks: %d/%d installed", ok, total);
   if (ok == 0)
-    LOGW("No SSL PLT imports (expected: OpenSSL static-linked); "
-         "native elf_patcher + Java smali + NSC still apply");
+    LOGW("No SSL PLT imports found (expected if statically linked in target)");
+}
+
+static const HookModule s_ssl_module = {
+  .name = "SslPinning",
+  .install = ssl_pinning_install,
+};
+
+const HookModule *ssl_pinning_get_module(void) {
+  return &s_ssl_module;
 }

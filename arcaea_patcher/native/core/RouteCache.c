@@ -4,14 +4,11 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#include "DomainParser.h"
+#include "DomainConfig.h"
 
 #define LOG_MODULE_TAG "Route"
 #include "Logger.h"
 
-/* Original (pre-redirect) addresses learned from one real DNS lookup per
- * rule. connect() only rewrites destinations listed here for the *same*
- * rule, so unrelated connections can never be hijacked. */
 #define MAX_ORIG_V4_PER_RULE 4
 #define MAX_ORIG_V6_PER_RULE 2
 
@@ -24,7 +21,6 @@ static int s_snap_tried[DOMAIN_MAX_RULES];
 static route_resolver_fn s_resolver = NULL;
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Both helpers expect s_lock to be held. */
 static void remember_v4(size_t rule_idx, struct in_addr ip) {
   size_t i;
   for (i = 0; i < s_orig_v4_count[rule_idx]; i++) {
@@ -57,11 +53,13 @@ void route_cache_snapshot(size_t rule_idx) {
   size_t n4 = 0, n6 = 0;
   const DomainRule *rule;
   int rc;
+
   if (rule_idx >= DOMAIN_MAX_RULES)
     return;
-  rule = domain_get(rule_idx);
+  rule = domain_config_get(rule_idx);
   if (!rule || !rule->original[0])
     return;
+
   pthread_mutex_lock(&s_lock);
   resolver = s_resolver;
   if (!resolver || s_snap_tried[rule_idx]) {
@@ -76,10 +74,11 @@ void route_cache_snapshot(size_t rule_idx) {
   rc = resolver(rule->original, NULL, &hints, &res);
   if (rc != 0 || !res) {
     pthread_mutex_lock(&s_lock);
-    s_snap_tried[rule_idx] = 0; /* allow a later retry */
+    s_snap_tried[rule_idx] = 0;
     pthread_mutex_unlock(&s_lock);
     return;
   }
+
   pthread_mutex_lock(&s_lock);
   for (p = res; p; p = p->ai_next) {
     if (p->ai_family == AF_INET &&
@@ -88,23 +87,22 @@ void route_cache_snapshot(size_t rule_idx) {
       remember_v4(rule_idx, sin->sin_addr);
     } else if (p->ai_family == AF_INET6 &&
                p->ai_addrlen >= (socklen_t)sizeof(struct sockaddr_in6)) {
-      const struct sockaddr_in6 *sin6 =
-          (const struct sockaddr_in6 *)p->ai_addr;
+      const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)p->ai_addr;
       remember_v6(rule_idx, &sin6->sin6_addr);
     }
   }
   n4 = s_orig_v4_count[rule_idx];
   n6 = s_orig_v6_count[rule_idx];
   pthread_mutex_unlock(&s_lock);
+
   freeaddrinfo(res);
-  LOGI("rule[%zu] %s snapshot: v4=%zu v6=%zu", rule_idx, rule->original, n4,
-       n6);
+  LOGI("rule[%zu] %s snapshot: v4=%zu v6=%zu", rule_idx, rule->original, n4, n6);
 }
 
 static void *warm_thread(void *arg) {
   size_t i;
   (void)arg;
-  for (i = 0; i < domain_count(); i++)
+  for (i = 0; i < domain_config_count(); i++)
     route_cache_snapshot(i);
   return NULL;
 }
@@ -114,7 +112,7 @@ void route_cache_snapshot_all_async(void) {
   if (pthread_create(&tid, NULL, warm_thread, NULL) == 0)
     pthread_detach(tid);
   else
-    LOGW("Snapshot thread not started; will snapshot on first lookup");
+    LOGW("Snapshot thread creation failed; snapshotting will occur on demand");
 }
 
 int route_cache_is_original_v4(size_t rule_idx, const struct in_addr *ip) {

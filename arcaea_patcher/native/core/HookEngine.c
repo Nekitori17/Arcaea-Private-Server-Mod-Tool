@@ -20,14 +20,12 @@
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static int s_installed = 0;
 
-/* --- Deferred module installation ---------------------------------------- */
-
 typedef struct {
   const char *module_name;
   hook_installer_fn install_fn;
 } retry_ctx_t;
 
-/* Returns 1 for the caller that must run the installer, 0 otherwise. */
+/* Atomically ensures installer runs only once across threads. */
 static int claim_install(void) {
   int claimed;
   pthread_mutex_lock(&s_lock);
@@ -96,9 +94,7 @@ int hook_engine_install_when_loaded(const char *module_name,
   return 0;
 }
 
-/* --- GOT/PLT hooking ------------------------------------------------------ */
-
-/* load_bias = runtime_base - min_vaddr; handles absolute VA and RVA. */
+/* Resolves dynamic offset accounting for load bias. */
 static uint8_t *dyn_resolve(void *base, uintptr_t load_bias, ElfW(Addr) v) {
   uintptr_t uv = (uintptr_t)v;
   uintptr_t b = (uintptr_t)base;
@@ -107,11 +103,7 @@ static uint8_t *dyn_resolve(void *base, uintptr_t load_bias, ElfW(Addr) v) {
   return (uint8_t *)(uv + load_bias);
 }
 
-/* Pick the original implementation for a GOT slot.
- * With lazy binding the slot may still hold a PLT resolver stub that lives
- * inside the target module; calling it would bounce back into the hook, so
- * dlsym() is preferred in that case. Resolved in-module pointers (e.g.
- * statically linked OpenSSL exporting its own symbols) are kept as-is. */
+/* Obtains original function address, preferring dlsym if GOT slot holds unresolved stub. */
 static void *pick_original_addr(const char *symbol, void *slot_value,
                                 uintptr_t mod_lo, uintptr_t mod_hi) {
   uintptr_t cand = (uintptr_t)slot_value;
@@ -123,9 +115,6 @@ static void *pick_original_addr(const char *symbol, void *slot_value,
            slot_value, resolved);
       return resolved;
     }
-    if (resolved && resolved != slot_value)
-      LOGW("GOT slot for '%s' is in-module (%p) but dlsym differs (%p); "
-           "keeping GOT value", symbol, slot_value, resolved);
   }
   return slot_value;
 }
@@ -137,9 +126,8 @@ static int hook_rela(void *base, uintptr_t bias, void *rel, size_t sz,
   ElfW(Rela) *a = (ElfW(Rela) *)rel;
   size_t n = sz / sizeof(ElfW(Rela));
   size_t k;
-  if (n > 100000) {
+  if (n > 100000)
     return -2;
-  }
   for (k = 0; k < n; k++) {
 #if defined(__LP64__)
     uint32_t id = (uint32_t)ELF64_R_SYM(a[k].r_info);
@@ -170,9 +158,8 @@ static int hook_rel(void *base, uintptr_t bias, void *rel, size_t sz,
   ElfW(Rel) *r = (ElfW(Rel) *)rel;
   size_t n = sz / sizeof(ElfW(Rel));
   size_t k;
-  if (n > 100000) {
+  if (n > 100000)
     return -2;
-  }
   for (k = 0; k < n; k++) {
 #if defined(__LP64__)
     uint32_t id = (uint32_t)ELF64_R_SYM(r[k].r_info);
@@ -198,8 +185,8 @@ static int hook_rel(void *base, uintptr_t bias, void *rel, size_t sz,
 
 int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
                     void **orig_func) {
-  ElfW(Ehdr) * ehdr;
-  ElfW(Phdr) * phdr;
+  ElfW(Ehdr) *ehdr;
+  ElfW(Phdr) *phdr;
   ElfW(Dyn) *dyn = NULL;
   ElfW(Sym) *dynsym = NULL;
   const char *dynstr = NULL;
@@ -210,16 +197,19 @@ int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
   uintptr_t min_vaddr = (uintptr_t)-1;
   uintptr_t bias = 0;
   uintptr_t mod_lo = 0, mod_hi = 0;
-  ElfW(Dyn) * d;
+  ElfW(Dyn) *d;
   int i, rc;
+
   if (!module_base || !symbol_name || !hook_func)
     return -1;
+
   ehdr = (ElfW(Ehdr) *)module_base;
   if (ehdr->e_ident[0] != 0x7f || ehdr->e_ident[1] != 'E' ||
       ehdr->e_ident[2] != 'L' || ehdr->e_ident[3] != 'F')
     return -1;
   if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0 || ehdr->e_phnum > 64)
     return -1;
+
   phdr = (ElfW(Phdr) *)((uint8_t *)module_base + ehdr->e_phoff);
   for (i = 0; i < ehdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD && phdr[i].p_vaddr < min_vaddr)
@@ -229,10 +219,11 @@ int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
   }
   if (min_vaddr == (uintptr_t)-1 || !dyn)
     return -1;
+
   bias = (uintptr_t)module_base - min_vaddr;
-  /* Address span of this module, used to spot unresolved PLT stubs. */
   mod_lo = (uintptr_t)module_base;
   mod_hi = mod_lo;
+
   for (i = 0; i < ehdr->e_phnum; i++) {
     uintptr_t seg_lo, seg_hi;
     if (phdr[i].p_type != PT_LOAD)
@@ -244,6 +235,7 @@ int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
     if (seg_hi > mod_hi)
       mod_hi = seg_hi;
   }
+
   if ((uintptr_t)dyn < (uintptr_t)module_base ||
       (uintptr_t)dyn > (uintptr_t)module_base + 256u * 1024u * 1024u) {
     for (i = 0; i < ehdr->e_phnum; i++) {
@@ -253,6 +245,7 @@ int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
       }
     }
   }
+
   for (d = dyn; d->d_tag != DT_NULL; d++) {
     switch (d->d_tag) {
     case DT_SYMTAB:
@@ -277,14 +270,17 @@ int plt_hook_symbol(void *module_base, const char *symbol_name, void *hook_func,
       break;
     }
   }
+
   if (!dynsym || !dynstr || !plt_rel || !plt_sz || !strsz)
     return -1;
+
   if (rel_type == DT_RELA)
     rc = hook_rela(module_base, bias, plt_rel, plt_sz, symbol_name, dynsym,
                    dynstr, strsz, hook_func, orig_func, mod_lo, mod_hi);
   else
     rc = hook_rel(module_base, bias, plt_rel, plt_sz, symbol_name, dynsym,
                   dynstr, strsz, hook_func, orig_func, mod_lo, mod_hi);
+
   if (rc == 1) {
     LOGI("Hooked PLT [%s]: %s (%p -> %p)", rel_type == DT_RELA ? "RELA" : "REL",
          symbol_name, orig_func ? *orig_func : NULL, hook_func);

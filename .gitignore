@@ -372,3 +372,5 @@ google-services.json
 config.yml
 
 !arcaea_patcher/templates/**/*
+dump_tmp
+.ida

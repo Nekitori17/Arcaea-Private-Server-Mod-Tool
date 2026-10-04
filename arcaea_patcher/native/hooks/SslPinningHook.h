@@ -6,11 +6,11 @@
 extern "C" {
 #endif
 
-/* Installs getaddrinfo/gethostbyname/connect redirects into module_base. */
-void domain_redirect_install(void *module_base);
+/* Installs OpenSSL/BoringSSL verify-bypass hooks into module_base. */
+void ssl_pinning_install(void *module_base);
 
 /* Returns HookModule definition for registration with HookManager. */
-const HookModule *domain_redirect_get_module(void);
+const HookModule *ssl_pinning_get_module(void);
 
 #ifdef __cplusplus
 }
