@@ -8,6 +8,7 @@ from arcaea_patcher.core.apk_toolchain import ApkToolchain
 from arcaea_patcher.core.domain_patcher import DomainRoutingPatcher
 from arcaea_patcher.core.elf_patcher import NativeLibraryPatcher
 from arcaea_patcher.core.manifest_patcher import ManifestAndSecurityPatcher
+from arcaea_patcher.core.pin_patcher import PinVerifierPatcher
 from arcaea_patcher.core.smali_patcher import SmaliPatcher
 from arcaea_patcher.utils.logger import logger
 
@@ -52,6 +53,7 @@ class PatchPipeline:
         for so_file in so_files:
             patcher = NativeLibraryPatcher(so_file)
             patcher.patch_ssl_bypass()
+            PinVerifierPatcher(so_file).patch()
 
     def execute(self) -> None:
         """Executes the full patching workflow."""
