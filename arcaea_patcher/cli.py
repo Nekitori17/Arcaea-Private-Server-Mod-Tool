@@ -1,14 +1,17 @@
 import argparse
 from pathlib import Path
+import sys
+
+from arcaea_patcher import __version__
 from arcaea_patcher.config import PatchConfig
-from arcaea_patcher.core.apk_toolchain import ApkToolchain
+from arcaea_patcher.core.apk_toolchain import ApkToolchain, ToolchainError
 from arcaea_patcher.core.patch_pipeline import PatchPipeline
 from arcaea_patcher.utils.logger import logger
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="apk_patcher",
+        prog="arcaea_patcher",
         description="Modular Android APK Security & Network Routing Patcher",
     )
     parser.add_argument("input", type=Path, help="Path to original input APK file")
@@ -24,19 +27,19 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         default=None,
-        help="Optional YAML configuration file for custom settings",
+        help="Optional YAML configuration file (defaults to config.yml if present)",
     )
     parser.add_argument(
         "--api-host",
         type=str,
         default=None,
-        help="Custom hostname to replace API endpoints",
+        help="Custom hostname or IP for API endpoints",
     )
     parser.add_argument(
         "--auth-host",
         type=str,
         default=None,
-        help="Custom hostname to replace Authentication endpoints",
+        help="Custom hostname or IP for Authentication endpoints",
     )
     parser.add_argument(
         "--package-name",
@@ -44,7 +47,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Custom package name for the patched APK",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    return parser.parse_args(argv)
 
 
 def run_app() -> None:
@@ -64,6 +73,16 @@ def run_app() -> None:
 
     try:
         pipeline.execute()
+    except ToolchainError as e:
+        logger.error(f"Toolchain failure: {e}")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        raise SystemExit(1)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    run_app()
