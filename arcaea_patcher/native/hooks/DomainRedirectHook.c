@@ -101,12 +101,15 @@ static int hook_getaddrinfo(const char *node, const char *service,
     }
   }
 
-  LOGI("getaddrinfo: %s -> %s", node, rule->replacement);
-  if (rule->repl_port != 0 && (service == NULL || service[0] == '\0')) {
+  // Port redirection
+  if (rule->repl_port != 0) {
     char port_buf[8];
     snprintf(port_buf, sizeof(port_buf), "%d", rule->repl_port);
+    LOGI("getaddrinfo: %s:%s -> %s:%s", node,
+         (service && service[0]) ? service : "-", rule->replacement, port_buf);
     return orig_getaddrinfo(rule->replacement, port_buf, hints, res);
   }
+  LOGI("getaddrinfo: %s -> %s", node, rule->replacement);
   return orig_getaddrinfo(rule->replacement, service, hints, res);
 }
 
@@ -142,6 +145,17 @@ static struct hostent *hook_gethostbyname2(const char *name, int af) {
   return make_redirect_hostent(rule);
 }
 
+/* Wraps orig_connect and reports real failures with errno. Non-blocking
+   progress states (EINPROGRESS/EINTR/EALREADY/EISCONN) are not failures. */
+static int do_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+  int rc = orig_connect(sockfd, addr, addrlen);
+  if (rc != 0 && errno != EINPROGRESS && errno != EINTR && errno != EALREADY &&
+      errno != EISCONN) {
+    LOGW("connect failed (fd=%d): errno=%d (%s)", sockfd, errno, strerror(errno));
+  }
+  return rc;
+}
+
 static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
   size_t i;
   if (!orig_connect) {
@@ -159,19 +173,34 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
       for (i = 0; i < domain_config_count(); i++) {
         const DomainRule *r = domain_config_get(i);
         struct sockaddr_in dst;
+        int is_original;
+        int is_replacement;
         if (!r || !r->has_v4)
           continue;
-        if (r->orig_port != 0 && r->orig_port != port)
+        is_original = route_cache_is_original_v4(i, &sin->sin_addr);
+        is_replacement = (r->repl_v4.s_addr == sin->sin_addr.s_addr);
+        if (!is_original && !is_replacement)
           continue;
-        if (!route_cache_is_original_v4(i, &sin->sin_addr))
+        if (is_original) {
+          if (r->orig_port != 0 && r->orig_port != port)
+            continue;
+          memcpy(&dst, sin, sizeof(dst));
+          dst.sin_addr = r->repl_v4;
+          if (r->repl_port != 0)
+            dst.sin_port = htons((uint16_t)r->repl_port);
+          LOGI("redirect: :%d -> %s:%d (%s)", port, r->replacement,
+               r->repl_port ? r->repl_port : port, r->original);
+          return do_connect(sockfd, (struct sockaddr *)&dst, addrlen);
+        }
+        /* Destination already is the replacement IP: only fix the port when
+           getaddrinfo was not the path that resolved this connection. */
+        if (r->repl_port == 0 || port == r->repl_port)
           continue;
         memcpy(&dst, sin, sizeof(dst));
-        dst.sin_addr = r->repl_v4;
-        if (r->repl_port != 0)
-          dst.sin_port = htons((uint16_t)r->repl_port);
-        LOGI("redirect: :%d -> %s:%d (%s)", port, r->replacement,
-             r->repl_port ? r->repl_port : port, r->original);
-        return orig_connect(sockfd, (struct sockaddr *)&dst, addrlen);
+        dst.sin_port = htons((uint16_t)r->repl_port);
+        LOGI("redirect-port: %s:%d -> %s:%d (%s)", r->replacement, port,
+             r->replacement, r->repl_port, r->original);
+        return do_connect(sockfd, (struct sockaddr *)&dst, addrlen);
       }
     } else if (addr->sa_family == AF_INET6 &&
                addrlen >= (socklen_t)sizeof(struct sockaddr_in6)) {
@@ -180,23 +209,37 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
       for (i = 0; i < domain_config_count(); i++) {
         const DomainRule *r = domain_config_get(i);
         struct sockaddr_in6 dst6;
+        int is_original;
+        int is_replacement;
         if (!r || !r->has_v6)
           continue;
-        if (r->orig_port != 0 && r->orig_port != port)
+        is_original = route_cache_is_original_v6(i, &sin6->sin6_addr);
+        is_replacement = (memcmp(&r->repl_v6, &sin6->sin6_addr,
+                                 sizeof(struct in6_addr)) == 0);
+        if (!is_original && !is_replacement)
           continue;
-        if (!route_cache_is_original_v6(i, &sin6->sin6_addr))
+        if (is_original) {
+          if (r->orig_port != 0 && r->orig_port != port)
+            continue;
+          memcpy(&dst6, sin6, sizeof(dst6));
+          dst6.sin6_addr = r->repl_v6;
+          if (r->repl_port != 0)
+            dst6.sin6_port = htons((uint16_t)r->repl_port);
+          LOGI("redirect6: -> %s:%d (%s)", r->replacement,
+               r->repl_port ? r->repl_port : port, r->original);
+          return do_connect(sockfd, (struct sockaddr *)&dst6, addrlen);
+        }
+        if (r->repl_port == 0 || port == r->repl_port)
           continue;
         memcpy(&dst6, sin6, sizeof(dst6));
-        dst6.sin6_addr = r->repl_v6;
-        if (r->repl_port != 0)
-          dst6.sin6_port = htons((uint16_t)r->repl_port);
-        LOGI("redirect6: -> %s:%d (%s)", r->replacement,
-             r->repl_port ? r->repl_port : port, r->original);
-        return orig_connect(sockfd, (struct sockaddr *)&dst6, addrlen);
+        dst6.sin6_port = htons((uint16_t)r->repl_port);
+        LOGI("redirect6-port: %s:%d -> :%d (%s)", r->replacement, port,
+             r->repl_port, r->original);
+        return do_connect(sockfd, (struct sockaddr *)&dst6, addrlen);
       }
     }
   }
-  return orig_connect(sockfd, addr, addrlen);
+  return do_connect(sockfd, addr, addrlen);
 }
 
 void domain_redirect_install(void *module_base) {
