@@ -47,6 +47,25 @@ static struct hostent *make_redirect_hostent(const DomainRule *rule) {
   return &s_he;
 }
 
+/* Logs socket destination address and port for connection telemetry. */
+static void log_socket_target(const char *prefix, int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+  char ip_str[INET6_ADDRSTRLEN] = {0};
+  int port = 0;
+  if (!addr)
+    return;
+  if (addr->sa_family == AF_INET && addrlen >= (socklen_t)sizeof(struct sockaddr_in)) {
+    const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+    inet_ntop(AF_INET, &sin->sin_addr, ip_str, sizeof(ip_str));
+    port = ntohs(sin->sin_port);
+    LOGI("%s(fd=%d) target: %s:%d", prefix, sockfd, ip_str, port);
+  } else if (addr->sa_family == AF_INET6 && addrlen >= (socklen_t)sizeof(struct sockaddr_in6)) {
+    const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
+    inet_ntop(AF_INET6, &sin6->sin6_addr, ip_str, sizeof(ip_str));
+    port = ntohs(sin6->sin6_port);
+    LOGI("%s(fd=%d) target: [%s]:%d", prefix, sockfd, ip_str, port);
+  }
+}
+
 static int hook_getaddrinfo(const char *node, const char *service,
                             const struct addrinfo *hints,
                             struct addrinfo **res) {
@@ -129,6 +148,9 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
     errno = ENOTCONN;
     return -1;
   }
+
+  log_socket_target("connect", sockfd, addr, addrlen);
+
   if (addr && domain_config_count() > 0) {
     if (addr->sa_family == AF_INET &&
         addrlen >= (socklen_t)sizeof(struct sockaddr_in)) {
@@ -147,7 +169,7 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
         dst.sin_addr = r->repl_v4;
         if (r->repl_port != 0)
           dst.sin_port = htons((uint16_t)r->repl_port);
-        LOGI("connect: :%d -> %s:%d (%s)", port, r->replacement,
+        LOGI("redirect: :%d -> %s:%d (%s)", port, r->replacement,
              r->repl_port ? r->repl_port : port, r->original);
         return orig_connect(sockfd, (struct sockaddr *)&dst, addrlen);
       }
@@ -168,7 +190,7 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
         dst6.sin6_addr = r->repl_v6;
         if (r->repl_port != 0)
           dst6.sin6_port = htons((uint16_t)r->repl_port);
-        LOGI("connect6: -> %s:%d (%s)", r->replacement,
+        LOGI("redirect6: -> %s:%d (%s)", r->replacement,
              r->repl_port ? r->repl_port : port, r->original);
         return orig_connect(sockfd, (struct sockaddr *)&dst6, addrlen);
       }

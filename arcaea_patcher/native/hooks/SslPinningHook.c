@@ -15,6 +15,34 @@ static long (*orig_get_verify_result)(const void *) = NULL;
 static void (*orig_CTX_cert_verify_cb)(void *, void *, void *) = NULL;
 static int (*orig_set1_host)(void *, const char *) = NULL;
 static int (*orig_X509_check_host)(void *, const char *, size_t, unsigned, void **) = NULL;
+static int (*orig_SSL_read)(void *, void *, int) = NULL;
+static int (*orig_SSL_write)(void *, const void *, int) = NULL;
+
+/* Formats a safe preview string (printable ASCII or dot) for packet telemetry. */
+static void format_buffer_preview(const void *buf, int len, char *out, size_t out_sz) {
+  const unsigned char *p = (const unsigned char *)buf;
+  size_t i;
+  size_t max_len = (len < (int)out_sz - 1) ? (size_t)len : out_sz - 1;
+  if (max_len > 120)
+    max_len = 120;
+
+  if (!buf || len <= 0 || out_sz == 0) {
+    if (out_sz > 0)
+      out[0] = '\0';
+    return;
+  }
+
+  for (i = 0; i < max_len; i++) {
+    unsigned char c = p[i];
+    if (c == '\r' || c == '\n')
+      out[i] = ' ';
+    else if (c >= 0x20 && c <= 0x7E)
+      out[i] = (char)c;
+    else
+      out[i] = '.';
+  }
+  out[max_len] = '\0';
+}
 
 static void hook_CTX_set_verify(void *ctx, int mode, void *cb) {
   (void)mode;
@@ -76,11 +104,37 @@ static int hook_X509_check_host(void *cert, const char *host, size_t len,
   return 1;
 }
 
+static int hook_SSL_read(void *ssl, void *buf, int num) {
+  int rc;
+  if (!orig_SSL_read)
+    return -1;
+  rc = orig_SSL_read(ssl, buf, num);
+  if (rc > 0 && buf) {
+    char preview[128];
+    format_buffer_preview(buf, rc, preview, sizeof(preview));
+    LOGI("SSL_read(ssl=%p, req_len=%d, ret=%d): %s", ssl, num, rc, preview);
+  }
+  return rc;
+}
+
+static int hook_SSL_write(void *ssl, const void *buf, int num) {
+  if (num > 0 && buf) {
+    char preview[128];
+    format_buffer_preview(buf, num, preview, sizeof(preview));
+    LOGI("SSL_write(ssl=%p, len=%d): %s", ssl, num, preview);
+  } else {
+    LOGI("SSL_write(ssl=%p, len=%d)", ssl, num);
+  }
+  if (!orig_SSL_write)
+    return -1;
+  return orig_SSL_write(ssl, buf, num);
+}
+
 void ssl_pinning_install(void *module_base) {
   int ok = 0, total = 0;
   if (!module_base)
     return;
-  LOGI("Installing SSL-pinning bypass hooks...");
+  LOGI("Installing SSL-pinning bypass & telemetry hooks...");
 
 #define TRY_HOOK(sym, hook, orig)                                              \
   do {                                                                         \
@@ -99,6 +153,8 @@ void ssl_pinning_install(void *module_base) {
   TRY_HOOK("SSL_CTX_set_cert_verify_callback", hook_CTX_cert_verify_cb, &orig_CTX_cert_verify_cb);
   TRY_HOOK("SSL_set1_host", hook_set1_host, &orig_set1_host);
   TRY_HOOK("X509_check_host", hook_X509_check_host, &orig_X509_check_host);
+  TRY_HOOK("SSL_read", hook_SSL_read, &orig_SSL_read);
+  TRY_HOOK("SSL_write", hook_SSL_write, &orig_SSL_write);
 #undef TRY_HOOK
 
   LOGI("SSL hooks: %d/%d installed", ok, total);
