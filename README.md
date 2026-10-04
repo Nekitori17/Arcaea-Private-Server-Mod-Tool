@@ -1,220 +1,72 @@
-# Arcaea Private Server Patcher - v7.0.1c
+# Arcaea Private Server Mod Tool
 
-A modular, lightweight, and automated Python tool designed to unpack, patch, rebuild, and sign Arcaea (and similar Cocos2d-based) Android APKs for custom server routing and certificate verification adjustments.
+Python CLI that takes an Arcaea APK (tested on **7.0.260c**), disables SSL certificate/pinning checks (native + Java), redirects API/Auth traffic to your own server at runtime, then rebuilds, aligns and signs the APK.
 
-This tool focuses on:
+## What it does
 
-- **Native & Java SSL Verification Bypass**: Neutralises native OpenSSL/BoringSSL routines (`SSL_CTX_set_verify`, `SSL_set_verify`, `SSL_CTX_set_custom_verify`, `SSL_CTX_set_cert_verify_callback`, `SSL_set1_host`, `X509_verify_cert`, `SSL_get_verify_result`) with an ARM32/ARM64 (Thumb-aware, idempotent) binary patcher, installs runtime PLT hooks via `libneki.so`, and patches the Java `Cocos2dxHttpURLConnection` helpers (`setVerifySSL`, `verifySSLPins`). `SSL_CTX_set_cert_verify_callback` is patched because Arcaea registers its own certificate-pinning callback through it; without the patch the client completes the TLS handshake but tears it down before sending any HTTP request, which shows up as "Could not connect to online server".
-- **Dynamic Native Hook Domain Redirection (`libneki.so`)**: PLT-hooks `getaddrinfo` / `connect` / `gethostbyname` inside `libcocos2dcpp.so` and redirects name lookups and connections at runtime without domain length limits.
-- **Storage Access Framework Integration**: Exposes internal app data directory (`/data/data/<pkg>`) for file managers without root.
-- **Automated Build & Signing Pipeline**: Auto-discovers Android SDK build-tools, handles alignment with `zipalign`, and signs with `apksigner`.
+- **SSL bypass (static + runtime)** — patches `libcocos2dcpp.so` (ARM32/ARM64, Thumb-aware, idempotent) to neutralize `SSL_CTX_set_verify`, `SSL_CTX_set_custom_verify`, `SSL_CTX_set_cert_verify_callback`, `X509_verify_cert`, `SSL_set1_host`, plus curl's pinned-public-key check; and neutralizes `setVerifySSL` / `verifySSLPins` in `Cocos2dxHttpURLConnection.smali`.
+- **Domain redirection** — writes `assets/domain.cfg` (`original=replacement` rules) and injects `NekiLoader`, which loads `libneki.so`. The library PLT-hooks `getaddrinfo` / `gethostbyname` / `gethostbyname2` / `connect` inside `libcocos2dcpp.so`. No domain length limit; hostnames, `host:port` and raw IPs are supported.
+- **Network Security Config** — injected so the app trusts system + user CAs and allows cleartext (required for MITM / self-signed private servers).
+- **Optional features** — package rename (install side-by-side with the original app), Storage Access Framework provider (browse `/data/data/<pkg>` from a file manager, no root).
+- **Automated build** — apktool rebuild → `zipalign` → `apksigner`, with automatic tool discovery.
 
----
+## Requirements
 
-## 🧱 Step 0 — Bake the templates (`complie.py`)
+| Dependency | Needed for | Where to get it |
+|---|---|---|
+| Python 3.9+ with `pip install pyyaml` | patcher | [python.org](https://www.python.org/downloads/) |
+| JDK 11/17/21 (`java`, `javac`, `keytool` on PATH) | apktool, signing, `complie.py` | [Eclipse Temurin](https://adoptium.net/temurin/releases) |
+| `apktool.jar` | decompile/rebuild | [apktool releases](https://github.com/ibotpeaches/apktool/releases) — rename to `apktool.jar`, drop into `lib/` (or put `apktool` on PATH) |
+| Android build-tools (`zipalign`, `apksigner`) | align + sign | [build-tools archives](https://androidsdkmanager.azurewebsites.net/build_tools.html) — see discovery order below |
+| Android NDK + cmdline-tools | **only** `complie.py` | SDK Manager (Android Studio / `sdkmanager`) |
 
-The patcher injects pre-built artifacts (`libneki.so` + compiled Java classes) from `arcaea_patcher/templates/`. Bake them once — and again whenever `arcaea_patcher/native` or `arcaea_patcher/java` changes:
+Build-tools are resolved in this order:
 
-```bash
-python complie.py
-```
+1. `build-tools/` in the project root (extracted version folder, e.g. `build-tools/34.0.0/`)
+2. `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` → `build-tools/` (newest version wins)
+3. OS default SDK locations (`%LOCALAPPDATA%\Android\Sdk`, `~/Android/Sdk`, …)
+4. `zipalign` / `apksigner` on system PATH
 
-`complie.py` auto-detects the Android SDK (`ANDROID_HOME` / `ANDROID_SDK_ROOT` / default install locations) and performs two independent builds:
-
-1. **Native** — compiles `arcaea_patcher/native` with `ndk-build` and copies every produced library to `arcaea_patcher/templates/lib/<abi>/libneki.so` (`armeabi-v7a` + `arm64-v8a`).
-2. **Java** — compiles `arcaea_patcher/java` with `javac`, converts the classes with `d8` and disassembles them with `baksmali` into `arcaea_patcher/templates/smali_classes3/moe/neki/arc/*.smali`.
-
-The resulting `templates/` folder mirrors the layout of a decoded (apktool) APK, so during patching the pipeline merges it into the decompiled folder **in one step** (files with the same path are overwritten):
-
-```text
-arcaea_patcher/templates/
-├── lib/armeabi-v7a/libneki.so          ->  lib/armeabi-v7a/libneki.so
-├── lib/arm64-v8a/libneki.so            ->  lib/arm64-v8a/libneki.so
-└── smali_classes3/moe/neki/arc/*.smali ->  smali_classes3/...  (apktool packs it as classes3.dex)
-```
-
-Requirements used by `complie.py`:
-
-- JDK (`javac`, `java`) through `JAVA_HOME` or `PATH`.
-- Android SDK with an **NDK**, **build-tools** (`d8`), at least one **platform** (`android.jar`) and the **command line tools** (baksmali jars), or drop the baksmali `*.jar` files into `lib/`.
-
-If the templates were not baked, the pipeline only logs a warning and produces an APK **without** `libneki.so` / the injected Java classes.
-
----
-
-## 🚀 Dynamic Domain Routing (`domain.cfg`)
-
-Domain redirection is handled at runtime by `libneki.so` (built by `complie.py` for both **armeabi-v7a** and **arm64-v8a**).
-
-- **No string length limits**: route to any domain name or IP address.
-- **Runtime editable**: `domain.cfg` is generated from your `config.yml` during patching and extracted from the APK assets only **when missing**, so edits made in internal storage (e.g. through the Storage Access Framework provider) survive app restarts — delete the file to restore the APK default.
-
----
-
-## 🛠️ Prerequisites & Setup
-
-### 1. Python 3.9+
-
-Ensure [Python](https://www.python.org/downloads/) is installed and added to your system `PATH`.
-
-Install required dependencies:
+## Quick start
 
 ```bash
 pip install pyyaml
+
+# 1. put apktool.jar in lib/
+# 2. provide build-tools (folder above or ANDROID_HOME)
+
+# 3. configure your server (or skip and use CLI flags / default SSL-bypass-only mode)
+cp config.example.yml config.yml
+
+# 4. patch
+python -m arcaea_patcher arcaea_7.0.260c.apk -o patched.apk
 ```
 
-### 2. Java (JDK / JRE)
-
-Java is required to run Apktool, Apksigner and `complie.py`.
-
-- 📥 **Download**: [Eclipse Temurin (Adoptium)](https://adoptium.net/temurin/releases)
-- **Instructions**: Install Java (11, 17, or 21 LTS). Make sure **"Add to PATH"** is enabled so `java`, `javac` and `keytool` work in your terminal.
-
-### 3. Apktool
-
-Used for decompiling and rebuilding the APK.
-
-- 📥 **Download**: [Apktool Releases (GitHub)](https://github.com/ibotpeaches/apktool/releases)
-- **Instructions**:
-  1. Download the latest `apktool_x.x.x.jar`.
-  2. Rename it to `apktool.jar`.
-  3. Place it inside the `lib/` folder (or install it in your system `PATH`).
-
-### 4. Android SDK Build-Tools
-
-Provides `zipalign` and `apksigner`.
-
-The toolchain automatically detects the newest available build-tools from:
-
-- **Option A (System Android SDK)**: Environment variables `ANDROID_HOME` or `ANDROID_SDK_ROOT`.
-- **Option B (Local Folder)**: Place an extracted build-tools version folder (e.g. `34.0.0`) inside the `build-tools/` directory. [Build Tools Release](https://androidsdkmanager.azurewebsites.net/build_tools.html)
-- **Option C (System PATH)**: `zipalign` and `apksigner` installed directly on your system.
-
-### 5. Android NDK & Command Line Tools (only for `complie.py`)
-
-- Install the **NDK** and the **SDK command line tools** through Android Studio (SDK Manager) or `sdkmanager`.
-- `complie.py` also needs a platform (`<sdk>/platforms/<ver>/android.jar`) and build-tools providing `d8`.
-- See **Step 0 — Bake the templates (`complie.py`)** above for the full workflow.
-
----
-
-## 📁 Project Structure
-
-```text
-Project_Root/
-├── arcaea_patcher/                  # Core patcher package
-│   ├── __init__.py / __main__.py    # Package version + execution entry point
-│   ├── cli.py                       # CLI parser & execution flow
-│   ├── config.py                    # Configuration models & loader
-│   ├── constants.py                 # Default API/Auth domain lists
-│   ├── core/
-│   │   ├── apk_toolchain.py         # Dynamic SDK/toolchain locator & runner
-│   │   ├── elf_patcher.py           # ELF parser + native SSL bypass patcher (ARM32/ARM64)
-│   │   ├── manifest_patcher.py      # Manifest / NSC / DocumentsProvider injector
-│   │   ├── smali_patcher.py         # Java SSL pinning bypass + native hook trigger
-│   │   └── patch_pipeline.py        # Coordinated patching lifecycle
-│   ├── java/                        # Java sources baked into smali (NekiLoader, provider)
-│   ├── native/                      # C sources baked into libneki.so
-│   │   ├── Android.mk / Application.mk / Main.c
-│   │   ├── core/                    # HookEngine, RouteCache
-│   │   ├── hooks/                   # DomainRedirectHook, SSLPinningHook
-│   │   └── utils/                   # DomainParser, FileUtils, MemoryUtils, Logger.h
-│   ├── templates/                   # Baked artifacts (generated by complie.py)
-│   └── utils/
-│       ├── __init__.py
-│       └── logger.py                # Color terminal logger
-├── complie.py                       # Bakes arcaea_patcher/native + java into templates/
-├── gen_cert.py                      # (Optional) helper to generate the MITM certificate
-├── lib/
-│   └── apktool.jar                  # (Optional if apktool is in PATH)
-├── build-tools/                     # (Optional if SDK is in PATH or ANDROID_HOME)
-│   └── 34.0.0/                      # Any build-tools version folder
-│       ├── zipalign
-│       └── lib/
-│           └── apksigner.jar
-├── config.yml                       # Optional configuration file
-└── config.example.yml               # Example configuration
-```
-
----
-
-## 🚀 Usage & CLI Commands
-
-### 1. Bake the templates (first run / after changing native or java sources)
+CLI flags override `config.yml`. `config.yml` / `config.yaml` in the project root is picked up automatically.
 
 ```bash
-python complie.py
-```
-
-### 2. Basic SSL Pinning Bypass (Default)
-
-Unpacks the APK, applies native and Java verification bypasses, and re-signs with an auto-generated debug keystore:
-
-```bash
-python -m arcaea_patcher input.apk -o patched.apk
-```
-
-### 3. Custom Domain Redirection via CLI
-
-Redirect API and Authentication traffic to your private server:
-
-```bash
-# Example with separate hosts
 python -m arcaea_patcher input.apk -o patched.apk \
-  --api-host arc-api.nekitori17.com \
-  --auth-host au-v2.nekitori17.com
-
-# Example with a unified host
-python -m arcaea_patcher input.apk -o patched.apk \
-  --api-host ar-sv.nekitori17.com \
-  --auth-host ar-sv.nekitori17.com
+  --api-host arc-api.example.com \
+  --auth-host auth.example.com \
+  --package-name moe.neki.arc
 ```
 
-### 4. Using an Optional Configuration File
+The APK is signed with `debug.keystore` (auto-generated on first run) unless you change the `signing:` section. The original signature will not be preserved — uninstall the original app if the package name is unchanged.
 
-```bash
-python -m arcaea_patcher input.apk -o patched.apk -c config.yml
-```
-
----
-
-## 🔧 How the patching pipeline works
-
-`python -m arcaea_patcher` runs these steps (`core/patch_pipeline.py`):
-
-1. Decompiles the input APK with apktool.
-2. Merges the baked `templates/` tree (native libs + Java smali) into the decoded folder.
-3. Renames the package — and every package-derived identifier such as custom permission names — when `package_name` is set.
-4. Injects a permissive Network Security Config (system + user CAs, cleartext allowed).
-5. Injects the Storage Access Framework provider (when `expose_internal_data: true`).
-6. Writes `assets/domain.cfg` and injects the native hook trigger (when a server host is configured).
-7. Patches `libcocos2dcpp.so` (ARM32/ARM64, Thumb-aware) to neutralise OpenSSL verification.
-8. Patches the `Cocos2dxHttpURLConnection` smali to bypass Java-level SSL pinning.
-9. Rebuilds with apktool, aligns with `zipalign` and signs with `apksigner`.
-
----
-
-## ⚙️ Configuration (`config.yml` - Optional)
-
-You can define custom hostnames and signing credentials via YAML:
+## Configuration (`config.yml`)
 
 ```yaml
-# Custom Domain Routing
-# Supports any domain length or IP address!
 server:
-  api_host: "arc-api.nekitori17.com"
-  auth_host: "ar-au.nekitori17.com"
+  api_host: "arc-api.example.com"      # replaces arcapi-v4/v3.lowiro.com
+  auth_host: "auth.example.com:8080"   # replaces auth-v2/auth/arcaea.lowiro.com
+  custom_mappings:                     # optional extra rules, one per entry
+    "some.other.host": "192.168.1.10"
 
-# Custom Package Name (Optional)
-# Change the APK package name to install alongside the original app
-package_name: "moe.neki.arc"
+package_name: "moe.neki.arc"           # omit to keep the original package
 
 features:
-  # Expose Internal App Data via Storage Access Framework
-  expose_internal_data: false
+  expose_internal_data: false          # SAF provider for internal storage access
 
-# Custom Signing Configuration
-# If the keystore does not exist, a debug keystore will be generated automatically.
 signing:
   keystore: "debug.keystore"
   alias: "androiddebugkey"
@@ -222,37 +74,91 @@ signing:
   key_password: "android"
 ```
 
----
+If no `server:` host is set, the tool runs in SSL-bypass-only mode (no redirection).
 
-## 🔍 CLI Options
+## Pipeline
 
-```text
-usage: apk_patcher [-h] -o OUTPUT [-c CONFIG] [--api-host API_HOST] [--auth-host AUTH_HOST]
-                   [--package-name PACKAGE_NAME] input
+`python -m arcaea_patcher` executes (see `arcaea_patcher/core/patch_pipeline.py`):
 
-Modular Android APK Security & Network Routing Patcher
+1. Decompile with apktool
+2. Merge pre-built `templates/` (libneki.so + NekiLoader/InternalStorageProvider smali)
+3. Rename package (when configured) — including app-owned custom permissions
+4. Inject Network Security Config
+5. Inject Storage Access Framework provider (when enabled)
+6. Write `assets/domain.cfg` + inject `NekiLoader.init()` into the main Activity
+7. Patch `libcocos2dcpp.so` (ELF-level SSL bypass, both ABIs)
+8. Patch Java-level SSL pinning in smali
+9. Rebuild → `zipalign` → `apksigner`
 
-positional arguments:
-  input                 Path to original input APK file
+## On-device behavior
 
-options:
-  -h, --help            Show this help message and exit
-  -o, --output OUTPUT   Destination path for the patched APK file
-  -c, --config CONFIG   Optional YAML configuration file
-  --api-host API_HOST   Custom hostname for API endpoints
-  --auth-host AUTH_HOST Custom hostname for Auth endpoints
-  --package-name PKG    Custom package name for the patched APK
+- `NekiLoader` runs in the launcher Activity's `onCreate`. It copies `assets/domain.cfg` to `/data/user/0/<pkg>/files/domain.cfg` **only when missing or malformed**, then loads `libneki.so` and installs the hooks.
+- Edit `files/domain.cfg` on device to change routing without re-patching (needs `expose_internal_data: true` or root). Delete the file to restore the APK's default.
+- Redirect log lines appear in logcat under `NekiLoader` / `libneki` / `DomainRedirect`.
+
+## Rebuilding the injected artifacts (`complie.py`)
+
+`arcaea_patcher/templates/` (libneki.so for both ABIs + compiled smali) is **committed to the repo**, so you only need this when you modify `arcaea_patcher/native/` or `arcaea_patcher/java/`:
+
+```bash
+python complie.py
 ```
 
----
+Requires an Android SDK visible through `ANDROID_HOME` / `ANDROID_SDK_ROOT` with:
 
-## ⚠️ Troubleshooting
+- an **NDK** (`ndk-build`)
+- **build-tools** providing `d8`
+- at least one **platform** (`android.jar`)
+- **cmdline-tools** (baksmali jars) — or drop the baksmali `*.jar` files into `lib/`
+- a JDK (`javac`, `java`)
 
-- **`Could not find 'apktool'`**: place `apktool.jar` inside `lib/` or add `apktool` to your `PATH`.
-- **Java / `keytool` not found**: install a JDK from [Adoptium](https://adoptium.net/temurin/releases) and make sure `JAVA_HOME` (or `PATH`) points to it. Restart your terminal after installation.
-- **`Could not find 'zipalign'` / `'apksigner'`**: make sure you either set `ANDROID_HOME`, place an extracted build-tools directory in `build-tools/`, or install `zipalign` in your system `PATH`.
-- **`Android SDK not found`** (from `complie.py`): set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to your SDK folder.
-- **`ndk-build` not found**: install an NDK through the SDK Manager or set `ANDROID_NDK_HOME`.
-- **`baksmali CLI not found`**: install the SDK command line tools (`cmdline-tools`) or drop the baksmali `*.jar` files into `lib/`.
-- **`Templates directory not found` / `No template files merged`**: run `python complie.py` before patching.
-- **Game logs `Rule[...] -> <ip>` but still shows "Could not connect"**: make sure the `domain.cfg` on device has no stray bytes — the patcher now sanitises control characters/quotes when generating it, and `NekiLoader` re-extracts it from the APK assets if it is malformed. Delete `/data/user/0/<pkg>/files/domain.cfg` to force a refresh.
+If `templates/` is missing, patching still succeeds but produces an APK **without** domain redirection.
+
+## Optional: server certificate (`gen_cert.py`)
+
+Generates `server.pem` + `server.key` (RSA-2048, 10 years) with SANs covering the `lowiro.com` domains, `localhost` and any hosts/IPs listed in `config.yml` — for running your private server behind TLS.
+
+```bash
+pip install cryptography
+python gen_cert.py
+```
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `apktool not found` | Place `apktool.jar` in `lib/` or add `apktool` to PATH |
+| `zipalign not found` / `apksigner not found` | Set `ANDROID_HOME`, or put an extracted build-tools folder in `build-tools/`, or install them on PATH |
+| `keytool` / Java not found | Install a JDK, ensure `java`/`javac`/`keytool` are on PATH, restart the terminal |
+| `Templates directory not found` | `templates/` is missing — restore it from git or run `python complie.py` |
+| `Android SDK not found` / `ndk-build not found` (from `complie.py`) | Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) and install the NDK via SDK Manager |
+| `baksmali CLI not found` | Install SDK cmdline-tools, or drop the baksmali jars into `lib/` |
+| Game logs redirect rules but still says "Could not connect" | Delete `/data/user/0/<pkg>/files/domain.cfg` to force re-extraction, then check logcat for `NekiLoader` errors |
+| App connects but TLS still fails | The NSC trusts system + user CAs — install your server's CA/certificate on the device |
+
+## Project structure
+
+```text
+├── arcaea_patcher/
+│   ├── cli.py / config.py / constants.py    # CLI, YAML config loader, default domains
+│   ├── core/
+│   │   ├── patch_pipeline.py                # 9-step orchestration
+│   │   ├── apk_toolchain.py                 # tool discovery (apktool/build-tools/signing)
+│   │   ├── elf_patcher.py / pin_patcher.py  # native SSL bypass
+│   │   ├── smali_patcher.py                 # Java SSL bypass + NekiLoader injection
+│   │   ├── manifest_patcher.py              # package rename, NSC, SAF provider
+│   │   └── domain_patcher.py                # domain.cfg generation
+│   ├── java/                                # NekiLoader, InternalStorageProvider (source)
+│   ├── native/                              # libneki.so sources (NDK)
+│   └── templates/                           # pre-built artifacts merged into the APK
+├── complie.py                               # rebuild templates/ from java/ + native/
+├── gen_cert.py                              # optional TLS cert generator
+├── config.example.yml                       # copy to config.yml
+├── lib/apktool.jar                          # you provide (not in git)
+└── build-tools/                             # you provide (not in git)
+```
+
+## License
+
+[MIT](LICENSE)
+
