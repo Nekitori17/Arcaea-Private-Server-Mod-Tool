@@ -1,6 +1,6 @@
-# Arcaea Private Server Mod Tool
+# Arcaea Private Server Patcher - v7.0.260c
 
-Python CLI that takes an Arcaea APK (tested on **7.0.260c**), disables SSL certificate/pinning checks (native + Java), redirects API/Auth traffic to your own server at runtime, then rebuilds, aligns and signs the APK.
+Python CLI that takes an Arcaea APK, disables SSL certificate/pinning checks (native + Java), redirects API/Auth traffic to your own server at runtime, then rebuilds, aligns and signs the APK.
 
 ## What it does
 
